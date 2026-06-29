@@ -1,7 +1,16 @@
 import {z} from 'zod';
 
 export const modelConfigSchema = z.object({
-  baseURL: z.string().url(),
+  baseURL: z
+    .string()
+    .url()
+    .refine(
+      (value) => {
+        const protocol = new URL(value).protocol;
+        return protocol === 'http:' || protocol === 'https:';
+      },
+      {message: 'baseURL must use http or https'}
+    ),
   apiKey: z.string().min(1),
   model: z.string().min(1),
   temperature: z.number().min(0).max(2).default(0.2),

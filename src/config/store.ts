@@ -1,4 +1,4 @@
-import {mkdir, readFile, writeFile} from 'node:fs/promises';
+import {chmod, mkdir, readFile, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {modelConfigSchema, type ModelConfig} from './schema.js';
 
@@ -29,6 +29,9 @@ export async function loadConfig(options: ConfigStoreOptions = {}): Promise<Mode
 export async function saveConfig(config: ModelConfig, options: ConfigStoreOptions = {}) {
   const parsed = modelConfigSchema.parse(config);
   const configPath = getConfigPath(options);
-  await mkdir(join(getHomeDir(options), '.gps-code'), {recursive: true});
-  await writeFile(configPath, `${JSON.stringify(parsed, null, 2)}\n`, 'utf8');
+  const configDir = join(getHomeDir(options), '.gps-code');
+  await mkdir(configDir, {recursive: true, mode: 0o700});
+  await chmod(configDir, 0o700);
+  await writeFile(configPath, `${JSON.stringify(parsed, null, 2)}\n`, {encoding: 'utf8', mode: 0o600});
+  await chmod(configPath, 0o600);
 }
