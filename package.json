@@ -2,6 +2,14 @@
   "name": "gps-code",
   "version": "0.1.0",
   "description": "Chinese-first TUI code agent for understanding local codebases.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/angus-guo/gps-code.git"
+  },
+  "bugs": {
+    "url": "https://github.com/angus-guo/gps-code/issues"
+  },
+  "homepage": "https://github.com/angus-guo/gps-code#readme",
   "type": "module",
   "bin": {
     "gps-code": "./dist/cli/index.js"
