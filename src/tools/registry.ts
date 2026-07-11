@@ -1,21 +1,8 @@
 import {listFilesTool} from './list-files.js';
 import {readFileTool} from './read-file.js';
 import {searchTextTool} from './search-text.js';
+import type {ModelToolDefinition} from '../model/types.js';
 import type {ToolContext, ToolDefinition, ToolResult} from './types.js';
-
-export type ModelToolDefinition = {
-  type: 'function';
-  function: {
-    name: string;
-    description: string;
-    parameters: {
-      type: 'object';
-      properties: Record<string, Record<string, unknown>>;
-      required?: string[];
-      additionalProperties: false;
-    };
-  };
-};
 
 export const builtinTools = [
   listFilesTool,

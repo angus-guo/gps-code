@@ -10,6 +10,10 @@ describe('agent', () => {
       async chat(messages) {
         calls.push(messages);
         return '结论：这是一个 TypeScript 项目。';
+      },
+      async complete({messages}) {
+        calls.push(messages);
+        return {content: '结论：这是一个 TypeScript 项目。', toolCalls: []};
       }
     };
     const repoMap: RepoMap = {
