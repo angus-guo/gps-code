@@ -3,10 +3,21 @@ import {Box, Text} from 'ink';
 import {createAgent} from '../agent/agent.js';
 import {loadConfig} from '../config/store.js';
 import {createOpenAICompatibleClient} from '../model/openai-compatible.js';
+import type {ToolActivity} from '../tools/types.js';
 import {buildRepoMap} from '../workspace/indexer.js';
 import type {RepoMap} from '../workspace/types.js';
 import {ChatView, type ChatMessageView} from './components/ChatView.js';
 import {InputBox} from './components/InputBox.js';
+
+function formatToolActivity(activity: ToolActivity) {
+  const statusLabel = {
+    started: '工具开始',
+    completed: '工具完成',
+    failed: '工具失败'
+  }[activity.status];
+
+  return `${statusLabel} ${activity.toolName}: ${activity.summary}`;
+}
 
 export function App({cwd}: {cwd: string}) {
   const [messages, setMessages] = useState<ChatMessageView[]>([
@@ -59,7 +70,13 @@ export function App({cwd}: {cwd: string}) {
       }
       const agent = createAgent({
         model: createOpenAICompatibleClient(config),
-        repoMap
+        repoMap,
+        onToolActivity(activity) {
+          setMessages((current) => [
+            ...current,
+            {role: 'system', content: formatToolActivity(activity)}
+          ]);
+        }
       });
       const answer = await agent.ask(input);
       setMessages((current) => [...current, {role: 'assistant', content: answer}]);
