@@ -66,7 +66,7 @@ The first M4 experience should feel like:
 - Create: `src/commands/runner.ts`
 - Create: `tests/commands/runner.test.ts`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Test that `runCommand`:
 
@@ -85,7 +85,7 @@ pnpm test tests/commands/runner.test.ts
 
 Expected: FAIL because the module does not exist.
 
-- [ ] **Step 2: Implement command types**
+- [x] **Step 2: Implement command types**
 
 Define:
 
@@ -110,14 +110,14 @@ export type CommandResult = {
 };
 ```
 
-- [ ] **Step 3: Implement `runCommand`**
+- [x] **Step 3: Implement `runCommand`**
 
 Use `execa` with `reject: false`, `shell: false`, bounded timeout, and workspace path safety. Keep defaults conservative:
 
 - `timeoutMs`: `30_000`
 - `maxOutputBytes`: `64_000`
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
@@ -144,11 +144,11 @@ git commit -m "feat: add safe command runner"
 - Modify: `src/tui/components/ChatView.tsx`
 - Create: focused tests when the TUI structure is testable without brittle terminal snapshots.
 
-- [ ] Store one pending command proposal in `App`.
-- [ ] When pending, interpret `y`, `yes`, `确认`, `执行`, and `run` as confirmation.
-- [ ] Interpret `n`, `no`, `取消`, and `cancel` as rejection.
-- [ ] Run confirmed commands through `runCommand`.
-- [ ] Show command start, exit code, timeout, and output summary in the chat stream.
+- [x] Store one pending command proposal in `App`.
+- [x] When pending, interpret `y`, `yes`, `确认`, `执行`, and `run` as confirmation.
+- [x] Interpret `n`, `no`, `取消`, and `cancel` as rejection.
+- [x] Run confirmed commands through `runCommand`.
+- [x] Show command start, exit code, timeout, and output summary in the chat stream.
 
 ---
 

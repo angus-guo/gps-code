@@ -1,7 +1,15 @@
 import React, {useState} from 'react';
 import {Box, Text, useInput} from 'ink';
 
-export function InputBox({disabled, onSubmit}: {disabled?: boolean; onSubmit(input: string): void}) {
+export function InputBox({
+  disabled,
+  prompt = '输入问题，回车发送：',
+  onSubmit
+}: {
+  disabled?: boolean;
+  prompt?: string;
+  onSubmit(input: string): void;
+}) {
   const [value, setValue] = useState('');
 
   useInput((input, key) => {
@@ -23,7 +31,7 @@ export function InputBox({disabled, onSubmit}: {disabled?: boolean; onSubmit(inp
 
   return (
     <Box borderStyle="single" paddingX={1}>
-      <Text color="gray">{disabled ? '等待模型回复...' : '输入问题，回车发送：'}</Text>
+      <Text color="gray">{disabled ? '等待模型回复...' : prompt}</Text>
       <Text>{value}</Text>
     </Box>
   );

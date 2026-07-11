@@ -27,7 +27,7 @@ function quoteCommandPart(part: string) {
   return `'${part.replaceAll('\'', '\'\\\'\'')}'`;
 }
 
-function formatCommandLine(command: string, args: string[]) {
+export function formatCommandLine(command: string, args: string[] = []) {
   return [command, ...args].map(quoteCommandPart).join(' ');
 }
 
