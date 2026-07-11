@@ -34,6 +34,63 @@ function makeRepoMap(root: string): RepoMap {
 }
 
 describe('agent', () => {
+  it('summarizes completed command results with project context', async () => {
+    const root = await makeProject();
+    const calls: ModelRequest[] = [];
+    const model: ModelClient = {
+      async chat() {
+        throw new Error('chat should not be used by command summarization');
+      },
+      async complete(request) {
+        calls.push(request);
+        return {content: '测试失败：有一个断言未通过，建议先检查 stderr 中的失败用例。', toolCalls: []};
+      }
+    };
+    const agent = createAgent({model, repoMap: makeRepoMap(root)});
+
+    await expect(agent.summarizeCommandResult({
+      commandLine: 'pnpm test',
+      cwd: root,
+      exitCode: 1,
+      timedOut: false,
+      durationMs: 42,
+      stdout: '10 tests passed',
+      stderr: '1 test failed',
+      truncated: true
+    })).resolves.toContain('测试失败');
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].tools).toBeUndefined();
+    expect(JSON.stringify(calls[0].messages)).toContain('pnpm test');
+    expect(JSON.stringify(calls[0].messages)).toContain('1 test failed');
+    expect(JSON.stringify(calls[0].messages)).toContain('输出已截断');
+    expect(JSON.stringify(calls[0].messages)).toContain('package.json');
+  });
+
+  it('rejects an empty command result summary so the TUI can fall back', async () => {
+    const root = await makeProject();
+    const model: ModelClient = {
+      async chat() {
+        throw new Error('chat should not be used by command summarization');
+      },
+      async complete() {
+        return {content: '   ', toolCalls: []};
+      }
+    };
+    const agent = createAgent({model, repoMap: makeRepoMap(root)});
+
+    await expect(agent.summarizeCommandResult({
+      commandLine: 'pnpm test',
+      cwd: root,
+      exitCode: 0,
+      timedOut: false,
+      durationMs: 42,
+      stdout: 'ok',
+      stderr: '',
+      truncated: false
+    })).rejects.toThrow(/empty command result summary/i);
+  });
+
   it('adds senior engineer prompt and repo-map evidence to model messages', async () => {
     const root = await makeProject();
     const calls: ModelRequest[] = [];
@@ -54,7 +111,13 @@ describe('agent', () => {
     expect(JSON.stringify(calls[0].messages)).toContain('资深软件工程师');
     expect(JSON.stringify(calls[0].messages)).toContain('package.json');
     expect(JSON.stringify(calls[0].messages)).toContain('pnpm');
-    expect(calls[0].tools?.map((tool) => tool.function.name)).toEqual(['list_files', 'read_file', 'search_text']);
+    expect(calls[0].tools?.map((tool) => tool.function.name)).toEqual([
+      'list_files',
+      'read_file',
+      'search_text',
+      'propose_command'
+    ]);
+    expect(JSON.stringify(calls[0].messages)).toContain('需要用户确认后才会运行');
   });
 
   it('executes requested tools, sends tool results back, and returns final answer', async () => {
@@ -124,5 +187,54 @@ describe('agent', () => {
     const agent = createAgent({model, repoMap: makeRepoMap(root), maxToolRounds: 1});
 
     await expect(agent.ask('一直列文件')).rejects.toThrow(/maximum tool rounds/i);
+  });
+
+  it('emits a command proposal activity when the model calls propose_command', async () => {
+    const root = await makeProject();
+    const calls: ModelRequest[] = [];
+    const activities: ToolActivity[] = [];
+    const model: ModelClient = {
+      async chat() {
+        throw new Error('chat should not be used by the agent loop');
+      },
+      async complete(request) {
+        calls.push(request);
+        if (calls.length === 1) {
+          return {
+            content: '',
+            toolCalls: [{
+              id: 'call_command',
+              name: 'propose_command',
+              arguments: {command: 'pnpm', args: ['test'], reason: '运行测试'}
+            }]
+          };
+        }
+
+        return {content: '我已经准备好测试命令，需要你确认后才会运行。', toolCalls: []};
+      }
+    };
+
+    const agent = createAgent({
+      model,
+      repoMap: makeRepoMap(root),
+      onToolActivity(activity) {
+        activities.push(activity);
+      }
+    });
+
+    await expect(agent.ask('帮我验证项目')).resolves.toContain('命令尚未执行；请在 TUI 中确认后我才会运行它。');
+    expect(calls).toHaveLength(2);
+    expect(calls[1].messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: 'tool',
+        toolCallId: 'call_command',
+        content: expect.stringContaining('has not been executed')
+      })
+    ]));
+    expect(activities.map((activity) => activity.status)).toEqual(['started', 'completed', 'proposed']);
+    expect(activities.at(-1)).toMatchObject({
+      toolName: 'propose_command',
+      command: {command: 'pnpm', args: ['test']}
+    });
   });
 });

@@ -1,4 +1,5 @@
 import {listFilesTool} from './list-files.js';
+import {proposeCommandTool} from './propose-command.js';
 import {readFileTool} from './read-file.js';
 import {searchTextTool} from './search-text.js';
 import type {ModelToolDefinition} from '../model/types.js';
@@ -7,7 +8,8 @@ import type {ToolContext, ToolDefinition, ToolResult} from './types.js';
 export const builtinTools = [
   listFilesTool,
   readFileTool,
-  searchTextTool
+  searchTextTool,
+  proposeCommandTool
 ] as const satisfies readonly ToolDefinition<unknown>[];
 
 type AnyTool = ToolDefinition<unknown>;
@@ -38,6 +40,27 @@ const toolParameterSchemas: Record<string, ModelToolDefinition['function']['para
       limit: {type: 'integer', minimum: 1, maximum: 1000, default: 50}
     },
     required: ['query'],
+    additionalProperties: false
+  },
+  propose_command: {
+    type: 'object',
+    properties: {
+      command: {
+        type: 'string',
+        description: 'Executable name or path. Do not include shell syntax; pass arguments separately.'
+      },
+      args: {
+        type: 'array',
+        items: {type: 'string'},
+        description: 'Command arguments as argv items, with no shell interpolation.',
+        default: []
+      },
+      cwd: {type: 'string', description: 'Optional workspace-relative working directory.'},
+      timeoutMs: {type: 'integer', minimum: 1, maximum: 600000, default: 30000},
+      maxOutputBytes: {type: 'integer', minimum: 1, maximum: 10000000, default: 64000},
+      reason: {type: 'string', description: 'Brief reason why this command is useful.'}
+    },
+    required: ['command'],
     additionalProperties: false
   }
 };
