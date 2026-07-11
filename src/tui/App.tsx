@@ -10,7 +10,7 @@ import {buildRepoMap} from '../workspace/indexer.js';
 import type {RepoMap} from '../workspace/types.js';
 import {
   formatCommandCancelled,
-  formatCommandResult,
+  formatCommandResultWithSummary,
   formatCommandStarted,
   formatPendingCommand,
   getConfirmationDecision,
@@ -68,7 +68,7 @@ export function App({cwd}: {cwd: string}) {
 
   const canChat = useMemo(() => Boolean(repoMap) && !busy, [busy, repoMap]);
 
-  async function executePendingCommand(command: CommandRequest, root: string) {
+  async function executePendingCommand(command: CommandRequest, map: RepoMap) {
     setBusy(true);
     setMessages(appendMessage({
       role: 'system',
@@ -76,11 +76,24 @@ export function App({cwd}: {cwd: string}) {
       content: formatCommandStarted(command)
     }));
     try {
-      const result = await runCommand(root, command);
+      const result = await runCommand(map.root, command);
+      let summary: string | undefined;
+      try {
+        const config = await loadConfig();
+        if (config) {
+          const agent = createAgent({
+            model: createOpenAICompatibleClient(config),
+            repoMap: map
+          });
+          summary = await agent.summarizeCommandResult(result);
+        }
+      } catch {
+        // The deterministic result below remains available when model summarization fails.
+      }
       setMessages(appendMessage({
         role: 'system',
         kind: 'command-result',
-        content: formatCommandResult(result)
+        content: formatCommandResultWithSummary(result, summary)
       }));
     } catch (error) {
       setMessages(appendMessage({
@@ -93,7 +106,7 @@ export function App({cwd}: {cwd: string}) {
     }
   }
 
-  async function handleCommandConfirmation(input: string, command: CommandRequest, root: string) {
+  async function handleCommandConfirmation(input: string, command: CommandRequest, map: RepoMap) {
     setMessages(appendMessage({role: 'user', content: input}));
     const decision = getConfirmationDecision(input);
 
@@ -109,7 +122,7 @@ export function App({cwd}: {cwd: string}) {
 
     if (decision === 'confirm') {
       setPendingCommand(null);
-      await executePendingCommand(command, root);
+      await executePendingCommand(command, map);
       return;
     }
 
@@ -123,7 +136,7 @@ export function App({cwd}: {cwd: string}) {
   async function handleSubmit(input: string) {
     if (!repoMap) return;
     if (pendingCommand) {
-      await handleCommandConfirmation(input, pendingCommand, repoMap.root);
+      await handleCommandConfirmation(input, pendingCommand, repoMap);
       return;
     }
 

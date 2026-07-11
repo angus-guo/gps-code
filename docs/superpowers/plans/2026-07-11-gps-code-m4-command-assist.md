@@ -177,9 +177,9 @@ git commit -m "feat: add safe command runner"
 - Modify: `src/tui/App.tsx`
 - Modify: tests as needed.
 
-- [ ] Feed completed command results back to the model for concise summarization.
-- [ ] If model summarization fails, show a deterministic fallback summary.
-- [ ] Preserve raw output excerpts with truncation markers.
+- [x] Feed completed command results back to the model for concise summarization.
+- [x] If model summarization fails, show a deterministic fallback summary.
+- [x] Preserve raw output excerpts with truncation markers.
 
 ---
 

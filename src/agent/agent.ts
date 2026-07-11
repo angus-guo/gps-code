@@ -1,4 +1,5 @@
 import {seniorEngineerSystemPrompt} from './prompts.js';
+import type {CommandResult} from '../commands/types.js';
 import type {ChatMessage, ModelClient, ToolCall} from '../model/types.js';
 import {getProposedCommand} from '../tools/propose-command.js';
 import {executeToolCall, getToolDefinitionsForModel} from '../tools/registry.js';
@@ -7,6 +8,7 @@ import type {RepoMap} from '../workspace/types.js';
 
 export type Agent = {
   ask(input: string): Promise<string>;
+  summarizeCommandResult(result: CommandResult): Promise<string>;
 };
 
 export type AgentOptions = {
@@ -47,6 +49,31 @@ function createInitialMessages(repoMap: RepoMap, input: string): ChatMessage[] {
       ].join('\n')
     },
     {role: 'user', content: input}
+  ];
+}
+
+function createCommandResultSummaryMessages(repoMap: RepoMap, result: CommandResult): ChatMessage[] {
+  return [
+    {
+      role: 'system',
+      content: [
+        '你是 GPS Code 的资深软件开发工程师。',
+        '请用简体中文简洁总结刚刚完成的命令执行结果。',
+        '先给出成功、失败或超时结论，再说明最重要的 stdout/stderr 发现和建议的下一步。',
+        '如果输出已截断，必须明确提醒用户当前只能看到部分输出。',
+        '不要复述大段原始输出，不要编造命令结果中不存在的信息。'
+      ].join('\n')
+    },
+    {
+      role: 'user',
+      content: [
+        '项目概况：',
+        formatRepoMap(repoMap),
+        '',
+        '命令执行结果：',
+        JSON.stringify(result, null, 2)
+      ].join('\n')
+    }
   ];
 }
 
@@ -158,6 +185,17 @@ export function createAgent(options: AgentOptions): Agent {
         }
         toolRounds += 1;
       }
+    },
+
+    async summarizeCommandResult(result: CommandResult) {
+      const response = await options.model.complete({
+        messages: createCommandResultSummaryMessages(options.repoMap, result)
+      });
+      const summary = response.content.trim();
+      if (!summary) {
+        throw new Error('Model returned an empty command result summary.');
+      }
+      return summary;
     }
   };
 }

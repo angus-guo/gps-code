@@ -34,6 +34,63 @@ function makeRepoMap(root: string): RepoMap {
 }
 
 describe('agent', () => {
+  it('summarizes completed command results with project context', async () => {
+    const root = await makeProject();
+    const calls: ModelRequest[] = [];
+    const model: ModelClient = {
+      async chat() {
+        throw new Error('chat should not be used by command summarization');
+      },
+      async complete(request) {
+        calls.push(request);
+        return {content: '测试失败：有一个断言未通过，建议先检查 stderr 中的失败用例。', toolCalls: []};
+      }
+    };
+    const agent = createAgent({model, repoMap: makeRepoMap(root)});
+
+    await expect(agent.summarizeCommandResult({
+      commandLine: 'pnpm test',
+      cwd: root,
+      exitCode: 1,
+      timedOut: false,
+      durationMs: 42,
+      stdout: '10 tests passed',
+      stderr: '1 test failed',
+      truncated: true
+    })).resolves.toContain('测试失败');
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].tools).toBeUndefined();
+    expect(JSON.stringify(calls[0].messages)).toContain('pnpm test');
+    expect(JSON.stringify(calls[0].messages)).toContain('1 test failed');
+    expect(JSON.stringify(calls[0].messages)).toContain('输出已截断');
+    expect(JSON.stringify(calls[0].messages)).toContain('package.json');
+  });
+
+  it('rejects an empty command result summary so the TUI can fall back', async () => {
+    const root = await makeProject();
+    const model: ModelClient = {
+      async chat() {
+        throw new Error('chat should not be used by command summarization');
+      },
+      async complete() {
+        return {content: '   ', toolCalls: []};
+      }
+    };
+    const agent = createAgent({model, repoMap: makeRepoMap(root)});
+
+    await expect(agent.summarizeCommandResult({
+      commandLine: 'pnpm test',
+      cwd: root,
+      exitCode: 0,
+      timedOut: false,
+      durationMs: 42,
+      stdout: 'ok',
+      stderr: '',
+      truncated: false
+    })).rejects.toThrow(/empty command result summary/i);
+  });
+
   it('adds senior engineer prompt and repo-map evidence to model messages', async () => {
     const root = await makeProject();
     const calls: ModelRequest[] = [];

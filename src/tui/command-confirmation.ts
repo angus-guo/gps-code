@@ -149,3 +149,19 @@ export function formatCommandResult(result: CommandResult) {
 
   return details.join('\n');
 }
+
+export function formatCommandResultWithSummary(result: CommandResult, summary?: string) {
+  const fallback = formatCommandResult(result);
+  const trimmedSummary = summary?.trim();
+  if (!trimmedSummary) {
+    return fallback;
+  }
+
+  return [
+    '工程师摘要：',
+    trimmedSummary,
+    '',
+    '原始执行结果：',
+    fallback
+  ].join('\n');
+}

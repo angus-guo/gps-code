@@ -2,6 +2,7 @@ import {describe, expect, it} from 'vitest';
 import {
   formatCommandCancelled,
   formatCommandResult,
+  formatCommandResultWithSummary,
   formatPendingCommand,
   getConfirmationDecision,
   parseManualCommandProposal,
@@ -50,7 +51,7 @@ describe('command confirmation helpers', () => {
   });
 
   it('formats command results with output and status', () => {
-    const summary = formatCommandResult({
+    const result = {
       commandLine: 'pnpm test',
       cwd: '/workspace',
       exitCode: 1,
@@ -59,11 +60,35 @@ describe('command confirmation helpers', () => {
       stdout: 'ok',
       stderr: 'failed',
       truncated: true
-    });
+    };
+    const summary = formatCommandResult(result);
 
     expect(summary).toContain('退出码 1');
     expect(summary).toContain('stdout');
     expect(summary).toContain('stderr');
     expect(summary).toContain('输出已截断');
+
+    const modelSummary = formatCommandResultWithSummary(result, '测试失败，建议检查失败断言。');
+    expect(modelSummary).toContain('工程师摘要');
+    expect(modelSummary).toContain('测试失败，建议检查失败断言。');
+    expect(modelSummary).toContain('原始执行结果');
+    expect(modelSummary).toContain('stdout:\nok');
+    expect(modelSummary).toContain('输出已截断');
+  });
+
+  it('falls back to deterministic command output without a model summary', () => {
+    const result = {
+      commandLine: 'pnpm test',
+      cwd: '/workspace',
+      exitCode: 0,
+      timedOut: false,
+      durationMs: 42,
+      stdout: 'ok',
+      stderr: '',
+      truncated: false
+    };
+
+    expect(formatCommandResultWithSummary(result)).toBe(formatCommandResult(result));
+    expect(formatCommandResultWithSummary(result, '   ')).toBe(formatCommandResult(result));
   });
 });
