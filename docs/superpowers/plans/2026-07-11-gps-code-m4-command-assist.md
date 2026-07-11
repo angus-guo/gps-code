@@ -191,10 +191,10 @@ git commit -m "feat: add safe command runner"
 - Create: `tests/git/diff.test.ts`
 - Modify: TUI/agent integration only after the primitive is stable.
 
-- [ ] Detect whether the workspace has modified files.
-- [ ] Prepare a bounded `git diff --stat` and optional short patch excerpt.
-- [ ] Do not stage, commit, or revert files.
-- [ ] Ask the user what they want to do next.
+- [x] Detect whether the workspace has modified files.
+- [x] Prepare a bounded `git diff --stat` and optional short patch excerpt.
+- [x] Do not stage, commit, or revert files.
+- [x] Ask the user what they want to do next.
 
 ---
 

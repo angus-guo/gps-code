@@ -4,6 +4,7 @@ import {createAgent} from '../agent/agent.js';
 import {runCommand} from '../commands/runner.js';
 import type {CommandRequest} from '../commands/types.js';
 import {loadConfig} from '../config/store.js';
+import {prepareWorkspaceDiff} from '../git/diff.js';
 import {createOpenAICompatibleClient} from '../model/openai-compatible.js';
 import type {ToolActivity} from '../tools/types.js';
 import {buildRepoMap} from '../workspace/indexer.js';
@@ -17,6 +18,7 @@ import {
   parseManualCommandProposal
 } from './command-confirmation.js';
 import {ChatView, type ChatMessageView} from './components/ChatView.js';
+import {formatWorkspaceDiff} from './diff-summary.js';
 import {InputBox} from './components/InputBox.js';
 
 function formatToolActivity(activity: ToolActivity) {
@@ -95,6 +97,22 @@ export function App({cwd}: {cwd: string}) {
         kind: 'command-result',
         content: formatCommandResultWithSummary(result, summary)
       }));
+      try {
+        const diffMessage = formatWorkspaceDiff(await prepareWorkspaceDiff(map.root));
+        if (diffMessage) {
+          setMessages(appendMessage({
+            role: 'system',
+            kind: 'tool',
+            content: diffMessage
+          }));
+        }
+      } catch (error) {
+        setMessages(appendMessage({
+          role: 'system',
+          kind: 'tool',
+          content: `工作区变更检查失败：${error instanceof Error ? error.message : String(error)}`
+        }));
+      }
     } catch (error) {
       setMessages(appendMessage({
         role: 'system',
