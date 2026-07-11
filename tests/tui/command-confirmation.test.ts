@@ -41,6 +41,7 @@ describe('command confirmation helpers', () => {
 
   it('formats pending command prompts', () => {
     expect(formatPendingCommand({command: 'pnpm', args: ['test']})).toContain('$ pnpm test');
+    expect(formatPendingCommand({command: 'pnpm', args: ['test'], cwd: ''})).toContain('工作目录：.');
     expect(formatPendingCommand({command: 'pnpm', args: ['test']})).toContain('确认');
   });
 

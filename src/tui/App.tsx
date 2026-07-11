@@ -23,7 +23,8 @@ function formatToolActivity(activity: ToolActivity) {
   const statusLabel = {
     started: '工具开始',
     completed: '工具完成',
-    failed: '工具失败'
+    failed: '工具失败',
+    proposed: '命令建议'
   }[activity.status];
 
   return `${statusLabel} ${activity.toolName}: ${activity.summary}`;
@@ -164,6 +165,20 @@ export function App({cwd}: {cwd: string}) {
         model: createOpenAICompatibleClient(config),
         repoMap,
         onToolActivity(activity) {
+          if (activity.status === 'proposed' && activity.command) {
+            const {command} = activity;
+            setPendingCommand(command);
+            setMessages((current) => [
+              ...current,
+              {
+                role: 'system',
+                kind: 'command',
+                content: `${formatToolActivity(activity)}\n\n${formatPendingCommand(command)}`
+              }
+            ]);
+            return;
+          }
+
           setMessages((current) => [
             ...current,
             {role: 'system', kind: 'tool', content: formatToolActivity(activity)}

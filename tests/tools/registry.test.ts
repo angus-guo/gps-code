@@ -26,7 +26,7 @@ describe('tool registry', () => {
   it('exposes built-in tools', () => {
     const registry = createToolRegistry(builtinTools);
 
-    expect(registry.names()).toEqual(['list_files', 'read_file', 'search_text']);
+    expect(registry.names()).toEqual(['list_files', 'read_file', 'search_text', 'propose_command']);
   });
 
   it('rejects unknown tool names', async () => {
@@ -99,6 +99,31 @@ describe('tool registry', () => {
               limit: {type: 'integer', minimum: 1, maximum: 1000, default: 50}
             },
             required: ['query'],
+            additionalProperties: false
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'propose_command',
+          description: expect.any(String),
+          parameters: {
+            type: 'object',
+            properties: {
+              command: {type: 'string', description: expect.any(String)},
+              args: {
+                type: 'array',
+                items: {type: 'string'},
+                description: expect.any(String),
+                default: []
+              },
+              cwd: {type: 'string', description: expect.any(String)},
+              timeoutMs: {type: 'integer', minimum: 1, maximum: 600000, default: 30000},
+              maxOutputBytes: {type: 'integer', minimum: 1, maximum: 10000000, default: 64000},
+              reason: {type: 'string', description: expect.any(String)}
+            },
+            required: ['command'],
             additionalProperties: false
           }
         }

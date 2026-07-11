@@ -1,4 +1,5 @@
 import type {z} from 'zod';
+import type {CommandRequest} from '../commands/types.js';
 
 export type ToolContext = {
   root: string;
@@ -19,6 +20,7 @@ export type ToolDefinition<Input> = {
 export type ToolActivity = {
   toolName: string;
   input: unknown;
-  status: 'started' | 'completed' | 'failed';
+  status: 'started' | 'completed' | 'failed' | 'proposed';
   summary: string;
+  command?: CommandRequest;
 };

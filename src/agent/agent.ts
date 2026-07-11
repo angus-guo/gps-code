@@ -1,5 +1,6 @@
 import {seniorEngineerSystemPrompt} from './prompts.js';
 import type {ChatMessage, ModelClient, ToolCall} from '../model/types.js';
+import {getProposedCommand} from '../tools/propose-command.js';
 import {executeToolCall, getToolDefinitionsForModel} from '../tools/registry.js';
 import type {ToolActivity, ToolResult} from '../tools/types.js';
 import type {RepoMap} from '../workspace/types.js';
@@ -37,7 +38,13 @@ function createInitialMessages(repoMap: RepoMap, input: string): ChatMessage[] {
     {role: 'system', content: seniorEngineerSystemPrompt},
     {
       role: 'system',
-      content: `当前项目 repo map 如下。你可以使用工具读取更多项目证据。回答时必须说明依据；如果证据不足，说明还需要检查什么。\n\n${formatRepoMap(repoMap)}`
+      content: [
+        '当前项目 repo map 如下。你可以使用工具读取更多项目证据。',
+        '如果你想建议用户运行命令，必须使用 propose_command 工具提出命令；命令不会自动执行，最终回答必须说明需要用户确认后才会运行。',
+        '回答时必须说明依据；如果证据不足，说明还需要检查什么。',
+        '',
+        formatRepoMap(repoMap)
+      ].join('\n')
     },
     {role: 'user', content: input}
   ];
@@ -63,11 +70,15 @@ function formatToolResult(result: ToolResult) {
   );
 }
 
+function addCommandConfirmationNotice(content: string) {
+  return `${content}\n\n命令尚未执行；请在 TUI 中确认后我才会运行它。`;
+}
+
 export function createAgent(options: AgentOptions): Agent {
   const maxToolRounds = options.maxToolRounds ?? 4;
   const tools = getToolDefinitionsForModel();
 
-  async function runTool(toolCall: ToolCall): Promise<ChatMessage> {
+  async function runTool(toolCall: ToolCall): Promise<{message: ChatMessage; proposedCommand: boolean}> {
     const summarySuffix = summarizeToolInput(toolCall.arguments);
     options.onToolActivity?.({
       toolName: toolCall.name,
@@ -84,11 +95,24 @@ export function createAgent(options: AgentOptions): Agent {
         status: 'completed',
         summary: `${toolCall.name} completed`
       });
+      const proposedCommand = getProposedCommand(result.metadata);
+      if (proposedCommand) {
+        options.onToolActivity?.({
+          toolName: toolCall.name,
+          input: toolCall.arguments,
+          status: 'proposed',
+          summary: `Command proposed: ${proposedCommand.command}`,
+          command: proposedCommand
+        });
+      }
 
       return {
-        role: 'tool',
-        toolCallId: toolCall.id,
-        content: formatToolResult(result)
+        message: {
+          role: 'tool',
+          toolCallId: toolCall.id,
+          content: formatToolResult(result)
+        },
+        proposedCommand: Boolean(proposedCommand)
       };
     } catch (error) {
       options.onToolActivity?.({
@@ -105,6 +129,7 @@ export function createAgent(options: AgentOptions): Agent {
     async ask(input: string) {
       const messages = createInitialMessages(options.repoMap, input);
       let toolRounds = 0;
+      let proposedCommandSeen = false;
 
       while (true) {
         const response = await options.model.complete({messages, tools});
@@ -112,7 +137,9 @@ export function createAgent(options: AgentOptions): Agent {
           if (!response.content) {
             throw new Error('Model response did not include assistant content.');
           }
-          return response.content;
+          return proposedCommandSeen
+            ? addCommandConfirmationNotice(response.content)
+            : response.content;
         }
 
         if (toolRounds >= maxToolRounds) {
@@ -125,7 +152,9 @@ export function createAgent(options: AgentOptions): Agent {
           toolCalls: response.toolCalls
         });
         for (const toolCall of response.toolCalls) {
-          messages.push(await runTool(toolCall));
+          const result = await runTool(toolCall);
+          proposedCommandSeen = proposedCommandSeen || result.proposedCommand;
+          messages.push(result.message);
         }
         toolRounds += 1;
       }

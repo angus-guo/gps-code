@@ -102,7 +102,7 @@ export function formatPendingCommand(command: CommandRequest) {
   return [
     '准备执行命令：',
     `$ ${formatCommandLine(command.command, command.args ?? [])}`,
-    `工作目录：${command.cwd ?? '.'}`,
+    `工作目录：${command.cwd || '.'}`,
     '请回复 y/yes/确认/执行/run 执行，或 n/no/取消/cancel 取消。'
   ].join('\n');
 }

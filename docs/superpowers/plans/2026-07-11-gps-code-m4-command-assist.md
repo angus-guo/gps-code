@@ -162,10 +162,10 @@ git commit -m "feat: add safe command runner"
 - Create: `src/tools/propose-command.ts`
 - Modify: `tests/agent/agent.test.ts`
 
-- [ ] Add a model-visible `propose_command` tool.
-- [ ] Validate proposed command shape but do not execute it.
-- [ ] Emit command proposal activity to the TUI.
-- [ ] Keep the agent's final answer explicit: command execution requires user confirmation.
+- [x] Add a model-visible `propose_command` tool.
+- [x] Validate proposed command shape but do not execute it.
+- [x] Emit command proposal activity to the TUI.
+- [x] Keep the agent's final answer explicit: command execution requires user confirmation.
 
 ---
 
