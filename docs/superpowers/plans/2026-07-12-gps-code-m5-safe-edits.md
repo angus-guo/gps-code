@@ -55,10 +55,10 @@ Out of scope:
 
 ### Task 4: TUI Preview and Confirmation
 
-- [ ] Store one pending edit proposal.
-- [ ] Render purpose, file list, and bounded diff preview.
-- [ ] Support explicit apply and cancel inputs.
-- [ ] Surface stale proposal and apply failures clearly.
+- [x] Store one pending edit proposal.
+- [x] Render purpose, file list, and bounded diff preview.
+- [x] Support explicit apply and cancel inputs.
+- [x] Surface stale proposal and apply failures clearly.
 
 ### Task 5: Undo and Post-Edit Verification
 
