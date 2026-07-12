@@ -26,7 +26,8 @@ function formatToolActivity(activity: ToolActivity) {
     started: '工具开始',
     completed: '工具完成',
     failed: '工具失败',
-    proposed: '命令建议'
+    proposed: '命令建议',
+    'edit-proposed': '编辑建议'
   }[activity.status];
 
   return `${statusLabel} ${activity.toolName}: ${activity.summary}`;

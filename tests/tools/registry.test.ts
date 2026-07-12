@@ -26,7 +26,13 @@ describe('tool registry', () => {
   it('exposes built-in tools', () => {
     const registry = createToolRegistry(builtinTools);
 
-    expect(registry.names()).toEqual(['list_files', 'read_file', 'search_text', 'propose_command']);
+    expect(registry.names()).toEqual([
+      'list_files',
+      'read_file',
+      'search_text',
+      'propose_command',
+      'propose_file_edits'
+    ]);
   });
 
   it('rejects unknown tool names', async () => {
@@ -124,6 +130,52 @@ describe('tool registry', () => {
               reason: {type: 'string', description: expect.any(String)}
             },
             required: ['command'],
+            additionalProperties: false
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'propose_file_edits',
+          description: expect.any(String),
+          parameters: {
+            type: 'object',
+            properties: {
+              summary: {type: 'string', description: expect.any(String)},
+              files: {
+                type: 'array',
+                minItems: 1,
+                maxItems: 5,
+                description: expect.any(String),
+                items: {
+                  type: 'object',
+                  properties: {
+                    path: {type: 'string', description: expect.any(String)},
+                    reason: {type: 'string', description: expect.any(String)},
+                    action: {type: 'string', enum: ['create', 'update']},
+                    operations: {
+                      type: 'array',
+                      minItems: 1,
+                      maxItems: 20,
+                      description: expect.any(String),
+                      items: {
+                        type: 'object',
+                        properties: {
+                          oldText: {type: 'string', description: expect.any(String)},
+                          newText: {type: 'string', description: expect.any(String)}
+                        },
+                        required: ['oldText', 'newText'],
+                        additionalProperties: false
+                      }
+                    }
+                  },
+                  required: ['path', 'reason', 'action', 'operations'],
+                  additionalProperties: false
+                }
+              }
+            },
+            required: ['summary', 'files'],
             additionalProperties: false
           }
         }

@@ -1,4 +1,4 @@
-import {mkdtemp, rm, writeFile} from 'node:fs/promises';
+import {mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
@@ -115,7 +115,8 @@ describe('agent', () => {
       'list_files',
       'read_file',
       'search_text',
-      'propose_command'
+      'propose_command',
+      'propose_file_edits'
     ]);
     expect(JSON.stringify(calls[0].messages)).toContain('需要用户确认后才会运行');
   });
@@ -236,5 +237,61 @@ describe('agent', () => {
       toolName: 'propose_command',
       command: {command: 'pnpm', args: ['test']}
     });
+  });
+
+  it('emits a read-only edit proposal and requires user confirmation', async () => {
+    const root = await makeProject();
+    await writeFile(join(root, 'app.ts'), 'const answer = 41;\n', 'utf8');
+    const calls: ModelRequest[] = [];
+    const activities: ToolActivity[] = [];
+    const model: ModelClient = {
+      async chat() {
+        throw new Error('chat should not be used by the agent loop');
+      },
+      async complete(request) {
+        calls.push(request);
+        if (calls.length === 1) {
+          return {
+            content: '',
+            toolCalls: [{
+              id: 'call_edit',
+              name: 'propose_file_edits',
+              arguments: {
+                summary: '修正答案',
+                files: [{
+                  path: 'app.ts',
+                  reason: '修正错误常量',
+                  action: 'update',
+                  operations: [{oldText: '41', newText: '42'}]
+                }]
+              }
+            }]
+          };
+        }
+
+        return {content: '修改方案已经准备好，请查看 Diff。', toolCalls: []};
+      }
+    };
+    const agent = createAgent({
+      model,
+      repoMap: makeRepoMap(root),
+      onToolActivity(activity) {
+        activities.push(activity);
+      }
+    });
+
+    await expect(agent.ask('把答案改成 42')).resolves.toContain('文件尚未修改');
+    expect(activities.map((activity) => activity.status)).toEqual([
+      'started',
+      'completed',
+      'edit-proposed'
+    ]);
+    expect(activities.at(-1)?.editProposal?.proposal).toMatchObject({
+      summary: '修正答案',
+      files: [expect.objectContaining({path: 'app.ts', action: 'update'})]
+    });
+    const toolMessage = calls[1].messages.find((message) => message.role === 'tool');
+    expect(JSON.stringify(toolMessage)).not.toContain('const answer = 41');
+    expect(await readFile(join(root, 'app.ts'), 'utf8')).toBe('const answer = 41;\n');
   });
 });

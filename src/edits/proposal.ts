@@ -19,12 +19,12 @@ import {
   type TextEditOperation
 } from './types.js';
 
-const textEditOperationSchema = z.object({
+export const textEditOperationSchema = z.object({
   oldText: z.string(),
   newText: z.string()
 });
 
-const fileEditInputSchema = z.object({
+export const fileEditInputSchema = z.object({
   path: z.string().trim().min(1),
   reason: z.string().trim().min(1),
   action: z.enum(['create', 'update']),
@@ -34,6 +34,20 @@ const fileEditInputSchema = z.object({
 export const editProposalInputSchema = z.object({
   summary: z.string().trim().min(1),
   files: z.array(fileEditInputSchema).min(1).max(MAX_EDIT_FILES)
+});
+
+const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
+
+export const preparedFileEditSchema = fileEditInputSchema.extend({
+  expectedHash: sha256Schema.nullable(),
+  proposedHash: sha256Schema,
+  originalContent: z.string(),
+  proposedContent: z.string()
+});
+
+export const editProposalSchema = z.object({
+  summary: z.string().trim().min(1),
+  files: z.array(preparedFileEditSchema).min(1).max(MAX_EDIT_FILES)
 });
 
 function countTextBytes(input: EditProposalInput) {

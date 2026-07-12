@@ -1,5 +1,6 @@
 import {listFilesTool} from './list-files.js';
 import {proposeCommandTool} from './propose-command.js';
+import {proposeFileEditsTool} from './propose-file-edits.js';
 import {readFileTool} from './read-file.js';
 import {searchTextTool} from './search-text.js';
 import type {ModelToolDefinition} from '../model/types.js';
@@ -9,7 +10,8 @@ export const builtinTools = [
   listFilesTool,
   readFileTool,
   searchTextTool,
-  proposeCommandTool
+  proposeCommandTool,
+  proposeFileEditsTool
 ] as const satisfies readonly ToolDefinition<unknown>[];
 
 type AnyTool = ToolDefinition<unknown>;
@@ -61,6 +63,48 @@ const toolParameterSchemas: Record<string, ModelToolDefinition['function']['para
       reason: {type: 'string', description: 'Brief reason why this command is useful.'}
     },
     required: ['command'],
+    additionalProperties: false
+  },
+  propose_file_edits: {
+    type: 'object',
+    properties: {
+      summary: {type: 'string', description: 'Brief purpose of the complete edit proposal.'},
+      files: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 5,
+        description: 'Small set of workspace text files to create or update.',
+        items: {
+          type: 'object',
+          properties: {
+            path: {type: 'string', description: 'Workspace-relative text file path.'},
+            reason: {type: 'string', description: 'Why this file needs to change.'},
+            action: {type: 'string', enum: ['create', 'update']},
+            operations: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 20,
+              description: 'Exact text replacements applied in order.',
+              items: {
+                type: 'object',
+                properties: {
+                  oldText: {
+                    type: 'string',
+                    description: 'Exact unique current text. Use an empty string only when creating a file.'
+                  },
+                  newText: {type: 'string', description: 'Replacement text or complete new file content.'}
+                },
+                required: ['oldText', 'newText'],
+                additionalProperties: false
+              }
+            }
+          },
+          required: ['path', 'reason', 'action', 'operations'],
+          additionalProperties: false
+        }
+      }
+    },
+    required: ['summary', 'files'],
     additionalProperties: false
   }
 };

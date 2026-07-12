@@ -48,6 +48,11 @@ export type EditPreview = {
   truncated: boolean;
 };
 
+export type ProposedFileEdits = {
+  proposal: EditProposal;
+  preview: EditPreview;
+};
+
 export type AppliedFileEdit = {
   path: string;
   action: 'create' | 'update';

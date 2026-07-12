@@ -49,9 +49,9 @@ Out of scope:
 
 ### Task 3: Agent Edit Proposal Tool
 
-- [ ] Add a model-visible `propose_file_edits` tool.
-- [ ] Emit a pending edit activity without writing files.
-- [ ] Require the final agent answer to state that confirmation is required.
+- [x] Add a model-visible `propose_file_edits` tool.
+- [x] Emit a pending edit activity without writing files.
+- [x] Require the final agent answer to state that confirmation is required.
 
 ### Task 4: TUI Preview and Confirmation
 
