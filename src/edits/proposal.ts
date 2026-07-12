@@ -1,8 +1,13 @@
-import {createHash} from 'node:crypto';
-import {lstat, readFile, realpath, stat} from 'node:fs/promises';
-import {dirname, isAbsolute, relative, sep} from 'node:path';
+import {relative} from 'node:path';
 import {z} from 'zod';
 import {resolveWorkspacePath} from '../tools/path-safety.js';
+import {
+  getCanonicalWorkspaceRoot,
+  hashContent,
+  inspectExistingTextFile,
+  resolveSafeCreateTarget,
+  toPosixPath
+} from './file-safety.js';
 import {
   MAX_EDIT_FILES,
   MAX_EDIT_FILE_BYTES,
@@ -30,37 +35,6 @@ export const editProposalInputSchema = z.object({
   summary: z.string().trim().min(1),
   files: z.array(fileEditInputSchema).min(1).max(MAX_EDIT_FILES)
 });
-
-function toPosixPath(path: string) {
-  return sep === '/' ? path : path.split(sep).join('/');
-}
-
-function hashContent(content: string | Buffer) {
-  return createHash('sha256').update(content).digest('hex');
-}
-
-function isMissingFileError(error: unknown) {
-  return Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT');
-}
-
-function assertInsideWorkspace(root: string, path: string, inputPath: string) {
-  const relativePath = relative(root, path);
-  if (relativePath.startsWith('..') || isAbsolute(relativePath)) {
-    throw new Error(`Path is outside workspace: ${inputPath}`);
-  }
-}
-
-function decodeTextFile(buffer: Buffer, path: string) {
-  if (buffer.includes(0)) {
-    throw new Error(`File appears to be binary: ${path}`);
-  }
-
-  try {
-    return new TextDecoder('utf-8', {fatal: true}).decode(buffer);
-  } catch {
-    throw new Error(`File is not valid UTF-8 text: ${path}`);
-  }
-}
 
 function countTextBytes(input: EditProposalInput) {
   return input.files.reduce(
@@ -121,31 +95,14 @@ function applyOperations(content: string, file: FileEditInput) {
 }
 
 async function prepareExistingFile(root: string, file: FileEditInput) {
-  const targetPath = resolveWorkspacePath(root, file.path);
-  const targetLstat = await lstat(targetPath);
-  if (targetLstat.isSymbolicLink()) {
-    throw new Error(`Symbolic links cannot be edited: ${file.path}`);
-  }
-  if (!targetLstat.isFile()) {
-    throw new Error(`Path is not a file: ${file.path}`);
-  }
-  if (targetLstat.size > MAX_EDIT_FILE_BYTES) {
-    throw new Error(`File is too large: ${file.path}.`);
-  }
-
-  const canonicalTarget = await realpath(targetPath);
-  assertInsideWorkspace(root, canonicalTarget, file.path);
-  if (canonicalTarget !== targetPath) {
-    throw new Error(`Symbolic links cannot be edited: ${file.path}`);
-  }
-  const buffer = await readFile(canonicalTarget);
-  const originalContent = decodeTextFile(buffer, file.path);
+  const inspected = await inspectExistingTextFile(root, file.path);
+  const originalContent = inspected.content;
   const proposedContent = applyOperations(originalContent, file);
 
   return {
     ...file,
-    path: toPosixPath(relative(root, canonicalTarget)),
-    expectedHash: hashContent(buffer),
+    path: inspected.relativePath,
+    expectedHash: inspected.hash,
     proposedHash: hashContent(proposedContent),
     originalContent,
     proposedContent
@@ -153,24 +110,7 @@ async function prepareExistingFile(root: string, file: FileEditInput) {
 }
 
 async function prepareCreatedFile(root: string, file: FileEditInput) {
-  const targetPath = resolveWorkspacePath(root, file.path);
-  try {
-    await lstat(targetPath);
-    throw new Error(`Create target already exists: ${file.path}`);
-  } catch (error) {
-    if (!isMissingFileError(error)) {
-      throw error;
-    }
-  }
-
-  const parentPath = await realpath(dirname(targetPath));
-  assertInsideWorkspace(root, parentPath, file.path);
-  if (parentPath !== dirname(targetPath)) {
-    throw new Error(`Symbolic links cannot be edited: ${file.path}`);
-  }
-  if (!(await stat(parentPath)).isDirectory()) {
-    throw new Error(`Create target parent is not a directory: ${file.path}`);
-  }
+  const target = await resolveSafeCreateTarget(root, file.path);
   if (file.operations.length !== 1 || file.operations[0].oldText !== '') {
     throw new Error(`Create operations require exactly one empty oldText: ${file.path}`);
   }
@@ -183,7 +123,7 @@ async function prepareCreatedFile(root: string, file: FileEditInput) {
 
   return {
     ...file,
-    path: toPosixPath(relative(root, targetPath)),
+    path: target.relativePath,
     expectedHash: null,
     proposedHash: hashContent(proposedContent),
     originalContent: '',
@@ -194,10 +134,7 @@ async function prepareCreatedFile(root: string, file: FileEditInput) {
 export async function prepareEditProposal(root: string, input: EditProposalInput): Promise<EditProposal> {
   const parsed = editProposalInputSchema.parse(input);
   assertProposalBounds(parsed);
-  const canonicalRoot = await realpath(root);
-  if (!(await stat(canonicalRoot)).isDirectory()) {
-    throw new Error(`Workspace root is not a directory: ${root}`);
-  }
+  const canonicalRoot = await getCanonicalWorkspaceRoot(root);
 
   const normalizedPaths = parsed.files.map((file) => toPosixPath(relative(
     canonicalRoot,

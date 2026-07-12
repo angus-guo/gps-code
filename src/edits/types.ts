@@ -2,6 +2,8 @@ export const MAX_EDIT_FILES = 5;
 export const MAX_EDIT_OPERATIONS = 20;
 export const MAX_EDIT_TEXT_BYTES = 512_000;
 export const MAX_EDIT_FILE_BYTES = 1_000_000;
+export const DEFAULT_MAX_EDIT_PATCH_BYTES = 32_000;
+export const DEFAULT_MAX_EDIT_PREVIEW_BYTES = 64_000;
 
 export type TextEditOperation = {
   oldText: string;
@@ -30,4 +32,30 @@ export type PreparedFileEdit = FileEditInput & {
 export type EditProposal = {
   summary: string;
   files: PreparedFileEdit[];
+};
+
+export type EditPreviewFile = {
+  path: string;
+  reason: string;
+  action: 'create' | 'update';
+  patch: string;
+  truncated: boolean;
+};
+
+export type EditPreview = {
+  summary: string;
+  files: EditPreviewFile[];
+  truncated: boolean;
+};
+
+export type AppliedFileEdit = {
+  path: string;
+  action: 'create' | 'update';
+  previousHash: string | null;
+  appliedHash: string;
+};
+
+export type ApplyEditResult = {
+  summary: string;
+  files: AppliedFileEdit[];
 };

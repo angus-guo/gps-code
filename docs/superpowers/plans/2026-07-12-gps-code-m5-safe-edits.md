@@ -41,11 +41,11 @@ Out of scope:
 
 ### Task 2: Preview and Safe Apply Engine
 
-- [ ] Generate bounded unified diff previews.
-- [ ] Recheck expected hashes immediately before applying.
-- [ ] Write through temporary files and preserve existing file modes.
-- [ ] Roll back already written files if a multi-file apply fails.
-- [ ] Return deterministic apply results for the TUI.
+- [x] Generate bounded unified diff previews.
+- [x] Recheck expected hashes immediately before applying.
+- [x] Write through temporary files and preserve existing file modes.
+- [x] Roll back already written files if a multi-file apply fails.
+- [x] Return deterministic apply results for the TUI.
 
 ### Task 3: Agent Edit Proposal Tool
 
@@ -72,4 +72,3 @@ Out of scope:
 - [ ] Exercise focused edits in JS/TS, Python, Java, and C/C++ fixtures.
 - [ ] Verify confirm, reject, stale proposal, apply failure, and undo paths.
 - [ ] Run the full automated suite and manual TUI smoke test.
-
