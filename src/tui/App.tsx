@@ -6,6 +6,7 @@ import type {CommandRequest} from '../commands/types.js';
 import {loadConfig} from '../config/store.js';
 import {applyEditProposal} from '../edits/apply.js';
 import type {ProposedFileEdits} from '../edits/types.js';
+import {undoEditProposal} from '../edits/undo.js';
 import {prepareWorkspaceDiff} from '../git/diff.js';
 import {createOpenAICompatibleClient} from '../model/openai-compatible.js';
 import type {ToolActivity} from '../tools/types.js';
@@ -27,8 +28,18 @@ import {
   formatEditResult,
   formatEditStarted,
   formatPendingEdit,
-  getEditConfirmationDecision
+  formatPendingUndo,
+  formatUndoCancelled,
+  formatUndoError,
+  formatUndoResult,
+  formatUndoStarted,
+  getEditConfirmationDecision,
+  getUndoConfirmationDecision
 } from './edit-confirmation.js';
+import {
+  formatValidationSuggestion,
+  suggestValidationCommand
+} from './edit-verification.js';
 import {InputBox} from './components/InputBox.js';
 
 function formatToolActivity(activity: ToolActivity) {
@@ -54,6 +65,8 @@ export function App({cwd}: {cwd: string}) {
   const [repoMap, setRepoMap] = useState<RepoMap | null>(null);
   const [pendingCommand, setPendingCommand] = useState<CommandRequest | null>(null);
   const [pendingEdit, setPendingEdit] = useState<ProposedFileEdits | null>(null);
+  const [pendingUndo, setPendingUndo] = useState<ProposedFileEdits | null>(null);
+  const [lastAppliedEdit, setLastAppliedEdit] = useState<ProposedFileEdits | null>(null);
   const [busy, setBusy] = useState(true);
 
   useEffect(() => {
@@ -177,6 +190,32 @@ export function App({cwd}: {cwd: string}) {
         kind: 'edit-result',
         content: formatEditResult(result)
       }));
+      setLastAppliedEdit(proposed);
+      try {
+        const diffMessage = formatWorkspaceDiff(await prepareWorkspaceDiff(map.root));
+        if (diffMessage) {
+          setMessages(appendMessage({
+            role: 'system',
+            kind: 'tool',
+            content: diffMessage
+          }));
+        }
+      } catch (error) {
+        setMessages(appendMessage({
+          role: 'system',
+          kind: 'tool',
+          content: `工作区变更检查失败：${error instanceof Error ? error.message : String(error)}`
+        }));
+      }
+      const suggestion = suggestValidationCommand(map);
+      if (suggestion) {
+        setPendingCommand(suggestion.command);
+        setMessages(appendMessage({
+          role: 'system',
+          kind: 'command',
+          content: `${formatValidationSuggestion(suggestion)}\n\n${formatPendingCommand(suggestion.command)}`
+        }));
+      }
     } catch (error) {
       setMessages(appendMessage({
         role: 'system',
@@ -186,6 +225,75 @@ export function App({cwd}: {cwd: string}) {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function executePendingUndo(proposed: ProposedFileEdits, map: RepoMap) {
+    setBusy(true);
+    setMessages(appendMessage({
+      role: 'system',
+      kind: 'edit-proposal',
+      content: formatUndoStarted(proposed)
+    }));
+    try {
+      const result = await undoEditProposal(map.root, proposed.proposal);
+      setLastAppliedEdit(null);
+      setMessages(appendMessage({
+        role: 'system',
+        kind: 'edit-result',
+        content: formatUndoResult(result)
+      }));
+      try {
+        const diffMessage = formatWorkspaceDiff(await prepareWorkspaceDiff(map.root));
+        if (diffMessage) {
+          setMessages(appendMessage({
+            role: 'system',
+            kind: 'tool',
+            content: diffMessage
+          }));
+        }
+      } catch (error) {
+        setMessages(appendMessage({
+          role: 'system',
+          kind: 'tool',
+          content: `工作区变更检查失败：${error instanceof Error ? error.message : String(error)}`
+        }));
+      }
+    } catch (error) {
+      setMessages(appendMessage({
+        role: 'system',
+        kind: 'edit-result',
+        content: formatUndoError(error)
+      }));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleUndoConfirmation(input: string, proposed: ProposedFileEdits, map: RepoMap) {
+    setMessages(appendMessage({role: 'user', content: input}));
+    const decision = getUndoConfirmationDecision(input);
+
+    if (decision === 'reject') {
+      setPendingUndo(null);
+      setMessages(appendMessage({
+        role: 'system',
+        kind: 'edit-proposal',
+        content: formatUndoCancelled(proposed)
+      }));
+      return;
+    }
+
+    if (decision === 'confirm') {
+      setPendingUndo(null);
+      await executePendingUndo(proposed, map);
+      return;
+    }
+
+    setMessages(appendMessage({
+      role: 'system',
+      kind: 'edit-proposal',
+      content: formatPendingUndo(proposed)
+    }));
   }
 
   async function handleEditConfirmation(input: string, proposed: ProposedFileEdits, map: RepoMap) {
@@ -223,6 +331,29 @@ export function App({cwd}: {cwd: string}) {
     }
     if (pendingEdit) {
       await handleEditConfirmation(input, pendingEdit, repoMap);
+      return;
+    }
+    if (pendingUndo) {
+      await handleUndoConfirmation(input, pendingUndo, repoMap);
+      return;
+    }
+
+    if (input.trim().toLowerCase() === '/undo') {
+      setMessages(appendMessage({role: 'user', content: input}));
+      if (!lastAppliedEdit) {
+        setMessages(appendMessage({
+          role: 'system',
+          kind: 'edit-result',
+          content: '没有可撤销的 GPS Code 编辑。当前版本只保留最近一次成功应用的编辑。'
+        }));
+        return;
+      }
+      setPendingUndo(lastAppliedEdit);
+      setMessages(appendMessage({
+        role: 'system',
+        kind: 'edit-proposal',
+        content: formatPendingUndo(lastAppliedEdit)
+      }));
       return;
     }
 
@@ -319,7 +450,9 @@ export function App({cwd}: {cwd: string}) {
           ? '确认执行？'
           : pendingEdit
             ? '确认应用？'
-            : '输入问题，回车发送：'}
+            : pendingUndo
+              ? '确认撤销？'
+              : '输入问题，回车发送：'}
         onSubmit={handleSubmit}
       />
     </Box>

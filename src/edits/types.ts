@@ -64,3 +64,13 @@ export type ApplyEditResult = {
   summary: string;
   files: AppliedFileEdit[];
 };
+
+export type UndoneFileEdit = {
+  path: string;
+  action: 'create' | 'update';
+};
+
+export type UndoEditResult = {
+  summary: string;
+  files: UndoneFileEdit[];
+};

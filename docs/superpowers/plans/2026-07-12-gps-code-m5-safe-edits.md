@@ -62,10 +62,10 @@ Out of scope:
 
 ### Task 5: Undo and Post-Edit Verification
 
-- [ ] Keep an in-memory snapshot for the most recent applied edit.
-- [ ] Refuse undo when files changed after GPS Code applied them.
-- [ ] Show the resulting workspace diff.
-- [ ] Suggest validation commands through the existing confirmation flow.
+- [x] Keep an in-memory snapshot for the most recent applied edit.
+- [x] Refuse undo when files changed after GPS Code applied them.
+- [x] Show the resulting workspace diff.
+- [x] Suggest validation commands through the existing confirmation flow.
 
 ### Task 6: Cross-Language Acceptance
 

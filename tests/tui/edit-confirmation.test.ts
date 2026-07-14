@@ -4,7 +4,11 @@ import {
   formatEditError,
   formatEditResult,
   formatPendingEdit,
-  getEditConfirmationDecision
+  formatPendingUndo,
+  formatUndoError,
+  formatUndoResult,
+  getEditConfirmationDecision,
+  getUndoConfirmationDecision
 } from '../../src/tui/edit-confirmation.js';
 import type {ProposedFileEdits} from '../../src/edits/types.js';
 
@@ -81,5 +85,18 @@ describe('edit confirmation helpers', () => {
     expect(output).toContain('stale');
     expect(output).toContain('src/app.ts');
     expect(output).toContain('生成新的编辑提案');
+  });
+
+  it('formats and confirms one-level undo', () => {
+    expect(getUndoConfirmationDecision('undo')).toBe('confirm');
+    expect(getUndoConfirmationDecision('撤销')).toBe('confirm');
+    expect(getUndoConfirmationDecision('n')).toBe('reject');
+    expect(formatPendingUndo(proposed)).toContain('恢复原始内容 src/app.ts');
+    expect(formatUndoResult({
+      summary: '修正答案',
+      files: [{path: 'src/app.ts', action: 'update'}]
+    })).toContain('已恢复 src/app.ts');
+    expect(formatUndoError(new Error('changed after GPS Code applied it')))
+      .toContain('未强制撤销');
   });
 });
