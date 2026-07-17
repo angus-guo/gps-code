@@ -160,6 +160,15 @@ export function createEditUndoer(
           undone.push(item);
         }
       }
+
+      await Promise.all([...backupPaths].map(async (backupPath) => {
+        try {
+          await unlink(backupPath);
+          backupPaths.delete(backupPath);
+        } catch {
+          // A successful undo remains valid if an obsolete backup cannot be removed.
+        }
+      }));
     } catch (error) {
       const rollbackErrors: string[] = [];
       for (const item of [...undone].reverse()) {
@@ -178,11 +187,11 @@ export function createEditUndoer(
         : '';
       throw new Error(`Unable to undo edit proposal: ${message}.${rollbackMessage}`);
     } finally {
-      await Promise.all([...tempPaths, ...backupPaths].map(async (path) => {
+      await Promise.all([...tempPaths].map(async (path) => {
         try {
           await unlink(path);
         } catch {
-          // A staged file may already have been moved or removed.
+          // A staged temporary file may already have been moved or removed.
         }
       }));
     }

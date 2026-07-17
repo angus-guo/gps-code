@@ -117,4 +117,47 @@ describe('undoEditProposal', () => {
     expect(await readFile(join(root, 'second.ts'), 'utf8')).toBe('second after\n');
     expect((await readdir(root)).some((name) => name.startsWith('.gps-code-'))).toBe(false);
   });
+
+  it('preserves a created-file backup when undo rollback also fails', async () => {
+    const root = await makeRoot();
+    await writeFile(join(root, 'existing.ts'), 'before\n', 'utf8');
+    const proposal = await prepareEditProposal(root, {
+      summary: '创建并更新文件',
+      files: [
+        {
+          path: 'created.ts',
+          reason: '创建文件',
+          action: 'create',
+          operations: [{oldText: '', newText: 'created content\n'}]
+        },
+        {
+          path: 'existing.ts',
+          reason: '更新文件',
+          action: 'update',
+          operations: [{oldText: 'before', newText: 'after'}]
+        }
+      ]
+    });
+    await applyEditProposal(root, proposal);
+    let renameCalls = 0;
+    const {rename: realRename} = await import('node:fs/promises');
+    const undoWithRollbackFailure = createEditUndoer({
+      async rename(oldPath, newPath) {
+        renameCalls += 1;
+        if (renameCalls === 2) {
+          throw new Error('injected later undo failure');
+        }
+        if (renameCalls === 3) {
+          throw new Error('injected rollback failure');
+        }
+        await realRename(oldPath, newPath);
+      }
+    });
+
+    await expect(undoWithRollbackFailure(root, proposal)).rejects.toThrow(/rollback also failed/i);
+    const backupName = (await readdir(root)).find((name) => name.endsWith('.undo'));
+    expect(backupName).toBeDefined();
+    expect(await readFile(join(root, backupName!), 'utf8')).toBe('created content\n');
+    expect(await readFile(join(root, 'existing.ts'), 'utf8')).toBe('after\n');
+  });
 });
