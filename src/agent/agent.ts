@@ -2,6 +2,7 @@ import {seniorEngineerSystemPrompt} from './prompts.js';
 import type {CommandResult} from '../commands/types.js';
 import type {ChatMessage, ModelClient, ToolCall} from '../model/types.js';
 import {getProposedCommand} from '../tools/propose-command.js';
+import {getProposedFileEdits} from '../tools/propose-file-edits.js';
 import {executeToolCall, getToolDefinitionsForModel} from '../tools/registry.js';
 import type {ToolActivity, ToolResult} from '../tools/types.js';
 import type {RepoMap} from '../workspace/types.js';
@@ -43,6 +44,7 @@ function createInitialMessages(repoMap: RepoMap, input: string): ChatMessage[] {
       content: [
         '当前项目 repo map 如下。你可以使用工具读取更多项目证据。',
         '如果你想建议用户运行命令，必须使用 propose_command 工具提出命令；命令不会自动执行，最终回答必须说明需要用户确认后才会运行。',
+        '如果用户要求修改代码，先使用只读工具检查准确内容，再使用 propose_file_edits 提出精确编辑；该工具不会写入文件，最终回答必须说明需要用户查看 Diff 并确认后才会应用。',
         '回答时必须说明依据；如果证据不足，说明还需要检查什么。',
         '',
         formatRepoMap(repoMap)
@@ -90,7 +92,7 @@ function formatToolResult(result: ToolResult) {
   return JSON.stringify(
     {
       content: result.content,
-      metadata: result.metadata ?? {}
+      metadata: result.modelMetadata ?? result.metadata ?? {}
     },
     null,
     2
@@ -101,11 +103,19 @@ function addCommandConfirmationNotice(content: string) {
   return `${content}\n\n命令尚未执行；请在 TUI 中确认后我才会运行它。`;
 }
 
+function addEditConfirmationNotice(content: string) {
+  return `${content}\n\n文件尚未修改；请在 TUI 中查看 Diff 并确认后我才会应用编辑。`;
+}
+
 export function createAgent(options: AgentOptions): Agent {
   const maxToolRounds = options.maxToolRounds ?? 4;
   const tools = getToolDefinitionsForModel();
 
-  async function runTool(toolCall: ToolCall): Promise<{message: ChatMessage; proposedCommand: boolean}> {
+  async function runTool(toolCall: ToolCall): Promise<{
+    message: ChatMessage;
+    proposedCommand: boolean;
+    proposedEdit: boolean;
+  }> {
     const summarySuffix = summarizeToolInput(toolCall.arguments);
     options.onToolActivity?.({
       toolName: toolCall.name,
@@ -132,6 +142,16 @@ export function createAgent(options: AgentOptions): Agent {
           command: proposedCommand
         });
       }
+      const proposedEdit = getProposedFileEdits(result.metadata);
+      if (proposedEdit) {
+        options.onToolActivity?.({
+          toolName: toolCall.name,
+          input: toolCall.arguments,
+          status: 'edit-proposed',
+          summary: `Edit proposed: ${proposedEdit.proposal.summary}`,
+          editProposal: proposedEdit
+        });
+      }
 
       return {
         message: {
@@ -139,7 +159,8 @@ export function createAgent(options: AgentOptions): Agent {
           toolCallId: toolCall.id,
           content: formatToolResult(result)
         },
-        proposedCommand: Boolean(proposedCommand)
+        proposedCommand: Boolean(proposedCommand),
+        proposedEdit: Boolean(proposedEdit)
       };
     } catch (error) {
       options.onToolActivity?.({
@@ -157,6 +178,7 @@ export function createAgent(options: AgentOptions): Agent {
       const messages = createInitialMessages(options.repoMap, input);
       let toolRounds = 0;
       let proposedCommandSeen = false;
+      let proposedEditSeen = false;
 
       while (true) {
         const response = await options.model.complete({messages, tools});
@@ -164,9 +186,14 @@ export function createAgent(options: AgentOptions): Agent {
           if (!response.content) {
             throw new Error('Model response did not include assistant content.');
           }
-          return proposedCommandSeen
-            ? addCommandConfirmationNotice(response.content)
-            : response.content;
+          let content = response.content;
+          if (proposedCommandSeen) {
+            content = addCommandConfirmationNotice(content);
+          }
+          if (proposedEditSeen) {
+            content = addEditConfirmationNotice(content);
+          }
+          return content;
         }
 
         if (toolRounds >= maxToolRounds) {
@@ -181,6 +208,7 @@ export function createAgent(options: AgentOptions): Agent {
         for (const toolCall of response.toolCalls) {
           const result = await runTool(toolCall);
           proposedCommandSeen = proposedCommandSeen || result.proposedCommand;
+          proposedEditSeen = proposedEditSeen || result.proposedEdit;
           messages.push(result.message);
         }
         toolRounds += 1;

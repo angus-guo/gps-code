@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "commander": "^12.1.0",
+    "diff": "^7.0.0",
     "execa": "^9.6.0",
     "fast-glob": "^3.3.3",
     "ink": "^5.2.1",
@@ -36,6 +37,7 @@
     "zod": "^3.25.67"
   },
   "devDependencies": {
+    "@types/diff": "^7.0.2",
     "@types/node": "^22.15.34",
     "@types/react": "^18.3.23",
     "tsup": "^8.5.0",
