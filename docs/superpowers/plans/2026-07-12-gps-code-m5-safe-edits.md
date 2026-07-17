@@ -69,6 +69,10 @@ Out of scope:
 
 ### Task 6: Cross-Language Acceptance
 
-- [ ] Exercise focused edits in JS/TS, Python, Java, and C/C++ fixtures.
-- [ ] Verify confirm, reject, stale proposal, apply failure, and undo paths.
-- [ ] Run the full automated suite and manual TUI smoke test.
+- [x] Exercise focused edits in JS/TS, Python, Java, and C/C++ fixtures.
+- [x] Verify confirm, reject, stale proposal, apply failure, and undo paths.
+- [x] Run the full automated suite and manual TUI smoke test.
+
+Verification completed with 23 test files and 116 tests, followed by typecheck,
+production build, CLI help, and an isolated TUI edit/apply/undo smoke test using a
+local deterministic OpenAI-compatible endpoint.

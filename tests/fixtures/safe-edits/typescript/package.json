@@ -1,0 +1,7 @@
+{
+  "name": "typescript-safe-edit-fixture",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}
