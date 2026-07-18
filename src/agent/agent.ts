@@ -1,4 +1,9 @@
 import {seniorEngineerSystemPrompt} from './prompts.js';
+import {
+  createConversationHistory,
+  type ConversationHistoryOptions,
+  type ConversationSeedMessage
+} from './history.js';
 import type {CommandResult} from '../commands/types.js';
 import type {ChatMessage, ModelClient, ToolCall} from '../model/types.js';
 import {getProposedCommand} from '../tools/propose-command.js';
@@ -10,12 +15,15 @@ import type {RepoMap} from '../workspace/types.js';
 export type Agent = {
   ask(input: string): Promise<string>;
   summarizeCommandResult(result: CommandResult): Promise<string>;
+  getConversationHistory(): ChatMessage[];
 };
 
 export type AgentOptions = {
   model: ModelClient;
   repoMap: RepoMap;
   maxToolRounds?: number;
+  initialHistory?: readonly ConversationSeedMessage[];
+  historyOptions?: Omit<ConversationHistoryOptions, 'initialMessages'>;
   onToolActivity?: (activity: ToolActivity) => void;
 };
 
@@ -36,7 +44,7 @@ function formatRepoMap(repoMap: RepoMap) {
   );
 }
 
-function createInitialMessages(repoMap: RepoMap, input: string): ChatMessage[] {
+function createInitialMessages(repoMap: RepoMap, conversation: ChatMessage[]): ChatMessage[] {
   return [
     {role: 'system', content: seniorEngineerSystemPrompt},
     {
@@ -50,7 +58,7 @@ function createInitialMessages(repoMap: RepoMap, input: string): ChatMessage[] {
         formatRepoMap(repoMap)
       ].join('\n')
     },
-    {role: 'user', content: input}
+    ...conversation
   ];
 }
 
@@ -110,6 +118,10 @@ function addEditConfirmationNotice(content: string) {
 export function createAgent(options: AgentOptions): Agent {
   const maxToolRounds = options.maxToolRounds ?? 4;
   const tools = getToolDefinitionsForModel();
+  const history = createConversationHistory({
+    ...options.historyOptions,
+    initialMessages: options.initialHistory
+  });
 
   async function runTool(toolCall: ToolCall): Promise<{
     message: ChatMessage;
@@ -175,7 +187,11 @@ export function createAgent(options: AgentOptions): Agent {
 
   return {
     async ask(input: string) {
-      const messages = createInitialMessages(options.repoMap, input);
+      const turnMessages: ChatMessage[] = [{role: 'user', content: input}];
+      const messages = createInitialMessages(options.repoMap, [
+        ...history.getMessages(),
+        ...turnMessages
+      ]);
       let toolRounds = 0;
       let proposedCommandSeen = false;
       let proposedEditSeen = false;
@@ -193,6 +209,10 @@ export function createAgent(options: AgentOptions): Agent {
           if (proposedEditSeen) {
             content = addEditConfirmationNotice(content);
           }
+          const finalMessage: ChatMessage = {role: 'assistant', content};
+          messages.push(finalMessage);
+          turnMessages.push(finalMessage);
+          history.appendTurn(turnMessages);
           return content;
         }
 
@@ -200,16 +220,19 @@ export function createAgent(options: AgentOptions): Agent {
           throw new Error(`Maximum tool rounds exceeded (${maxToolRounds}).`);
         }
 
-        messages.push({
+        const assistantToolMessage: ChatMessage = {
           role: 'assistant',
           content: response.content,
           toolCalls: response.toolCalls
-        });
+        };
+        messages.push(assistantToolMessage);
+        turnMessages.push(assistantToolMessage);
         for (const toolCall of response.toolCalls) {
           const result = await runTool(toolCall);
           proposedCommandSeen = proposedCommandSeen || result.proposedCommand;
           proposedEditSeen = proposedEditSeen || result.proposedEdit;
           messages.push(result.message);
+          turnMessages.push(result.message);
         }
         toolRounds += 1;
       }
@@ -224,6 +247,10 @@ export function createAgent(options: AgentOptions): Agent {
         throw new Error('Model returned an empty command result summary.');
       }
       return summary;
+    },
+
+    getConversationHistory() {
+      return history.getMessages();
     }
   };
 }

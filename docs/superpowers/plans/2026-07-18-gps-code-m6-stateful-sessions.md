@@ -46,11 +46,14 @@ production build, and `git diff --check`.
 
 ### Task 2: Multi-Turn Agent Context
 
-- [ ] Keep user and assistant turns across repeated `ask` calls.
-- [ ] Preserve required tool-call/tool-result pairs in model history.
-- [ ] Reconstruct model context from a resumed transcript.
-- [ ] Bound history by deterministic byte and turn budgets.
-- [ ] Keep the system prompt and current repo map in every request.
+- [x] Keep user and assistant turns across repeated `ask` calls.
+- [x] Preserve required tool-call/tool-result pairs in model history.
+- [x] Reconstruct model context from a resumed transcript.
+- [x] Bound history by deterministic byte and turn budgets.
+- [x] Keep the system prompt and current repo map in every request.
+
+Task 2 verification: 25 test files and 132 tests, followed by typecheck,
+production build, and `git diff --check`.
 
 ### Task 3: TUI Transcript Persistence
 

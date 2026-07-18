@@ -121,6 +121,68 @@ describe('agent', () => {
     expect(JSON.stringify(calls[0].messages)).toContain('需要用户确认后才会运行');
   });
 
+  it('includes completed prior turns in follow-up model requests', async () => {
+    const root = await makeProject();
+    const calls: ModelRequest[] = [];
+    const model: ModelClient = {
+      async chat() {
+        throw new Error('chat should not be used by the agent loop');
+      },
+      async complete(request) {
+        calls.push(request);
+        return calls.length === 1
+          ? {content: '入口在 src/cli/index.ts。', toolCalls: []}
+          : {content: '它负责启动 CLI。', toolCalls: []};
+      }
+    };
+    const agent = createAgent({model, repoMap: makeRepoMap(root)});
+
+    await agent.ask('入口在哪里？');
+    await agent.ask('它负责什么？');
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1].messages).toEqual(expect.arrayContaining([
+      {role: 'user', content: '入口在哪里？'},
+      {role: 'assistant', content: '入口在 src/cli/index.ts。'},
+      {role: 'user', content: '它负责什么？'}
+    ]));
+    expect(agent.getConversationHistory()).toEqual([
+      {role: 'user', content: '入口在哪里？'},
+      {role: 'assistant', content: '入口在 src/cli/index.ts。'},
+      {role: 'user', content: '它负责什么？'},
+      {role: 'assistant', content: '它负责启动 CLI。'}
+    ]);
+  });
+
+  it('reconstructs bounded context from completed session messages', async () => {
+    const root = await makeProject();
+    const calls: ModelRequest[] = [];
+    const model: ModelClient = {
+      async chat() {
+        throw new Error('chat should not be used by the agent loop');
+      },
+      async complete(request) {
+        calls.push(request);
+        return {content: '继续回答。', toolCalls: []};
+      }
+    };
+    const agent = createAgent({
+      model,
+      repoMap: makeRepoMap(root),
+      initialHistory: [
+        {role: 'user', content: '这是上一轮问题。'},
+        {role: 'assistant', content: '这是上一轮回答。'},
+        {role: 'user', content: '未完成问题不会进入历史。'}
+      ]
+    });
+
+    await agent.ask('继续');
+
+    expect(JSON.stringify(calls[0].messages)).toContain('这是上一轮问题。');
+    expect(JSON.stringify(calls[0].messages)).toContain('这是上一轮回答。');
+    expect(JSON.stringify(calls[0].messages)).not.toContain('未完成问题');
+  });
+
   it('executes requested tools, sends tool results back, and returns final answer', async () => {
     const root = await makeProject();
     await writeFile(join(root, 'README.md'), 'GPS Code README\n', 'utf8');
@@ -169,6 +231,10 @@ describe('agent', () => {
     );
     expect(activities.map((activity) => activity.status)).toEqual(['started', 'completed']);
     expect(activities.map((activity) => activity.toolName)).toEqual(['read_file', 'read_file']);
+    expect(agent.getConversationHistory()).toEqual(expect.arrayContaining([
+      expect.objectContaining({role: 'assistant', toolCalls: [expect.objectContaining({id: 'call_1'})]}),
+      expect.objectContaining({role: 'tool', toolCallId: 'call_1'})
+    ]));
   });
 
   it('stops after the configured maximum number of tool rounds', async () => {
