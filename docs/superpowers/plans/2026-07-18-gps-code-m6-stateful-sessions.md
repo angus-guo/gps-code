@@ -57,11 +57,14 @@ production build, and `git diff --check`.
 
 ### Task 3: TUI Transcript Persistence
 
-- [ ] Persist user-visible messages after they are rendered.
-- [ ] Restore completed messages when continuing a session.
-- [ ] Surface persistence failures without stopping chat.
-- [ ] Keep pending command, edit, and undo state process-local.
-- [ ] Mark interrupted proposals as expired on resume.
+- [x] Persist user-visible messages after they are rendered.
+- [x] Restore completed messages when continuing a session.
+- [x] Surface persistence failures without stopping chat.
+- [x] Keep pending command, edit, and undo state process-local.
+- [x] Mark interrupted proposals as expired on resume.
+
+Task 3 verification: 26 test files and 136 tests, followed by typecheck,
+production build, and `git diff --check`.
 
 ### Task 4: CLI Session Lifecycle
 

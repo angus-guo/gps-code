@@ -350,3 +350,5 @@ export function createSessionStore(options: SessionStoreOptions = {}) {
     loadLatestSession
   };
 }
+
+export type SessionStore = ReturnType<typeof createSessionStore>;
