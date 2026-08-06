@@ -10,6 +10,7 @@ import type {RepoMap} from '../workspace/types.js';
 export type Agent = {
   ask(input: string): Promise<string>;
   summarizeCommandResult(result: CommandResult): Promise<string>;
+  cancel(): void;
 };
 
 export type AgentOptions = {
@@ -18,6 +19,9 @@ export type AgentOptions = {
   maxToolRounds?: number;
   onToolActivity?: (activity: ToolActivity) => void;
 };
+
+const MAX_TOOL_ROUNDS = 20;
+const MAX_TOOL_RESULT_LENGTH = 2000;
 
 function formatRepoMap(repoMap: RepoMap) {
   return JSON.stringify(
@@ -88,10 +92,23 @@ function summarizeToolInput(input: unknown) {
   return values.length ? ` (${values.join(', ')})` : '';
 }
 
+function truncateString(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  const half = Math.floor(maxLength / 2);
+  return `${text.slice(0, half)}...[truncated]...${text.slice(-half)}`;
+}
+
 function formatToolResult(result: ToolResult) {
+  let content = result.content;
+  if (content.length > MAX_TOOL_RESULT_LENGTH) {
+    content = truncateString(content, MAX_TOOL_RESULT_LENGTH);
+  }
+
   return JSON.stringify(
     {
-      content: result.content,
+      content,
       metadata: result.modelMetadata ?? result.metadata ?? {}
     },
     null,
@@ -107,17 +124,35 @@ function addEditConfirmationNotice(content: string) {
   return `${content}\n\n文件尚未修改；请在 TUI 中查看 Diff 并确认后我才会应用编辑。`;
 }
 
-export function createAgent(options: AgentOptions): Agent {
-  const maxToolRounds = options.maxToolRounds ?? 4;
-  const tools = getToolDefinitionsForModel();
+export class AgentSession implements Agent {
+  private messages: ChatMessage[] = [];
+  private abortController: AbortController | null = null;
+  private repoMapSent = false;
+  private readonly maxToolRounds: number;
+  private readonly tools;
 
-  async function runTool(toolCall: ToolCall): Promise<{
+  constructor(private readonly options: AgentOptions) {
+    this.maxToolRounds = options.maxToolRounds ?? MAX_TOOL_ROUNDS;
+    this.tools = getToolDefinitionsForModel();
+
+    // Initialize with system messages
+    this.messages.push({role: 'system', content: seniorEngineerSystemPrompt});
+  }
+
+  cancel(): void {
+    if (this.abortController) {
+      this.abortController.abort();
+      this.abortController = null;
+    }
+  }
+
+  private async runTool(toolCall: ToolCall): Promise<{
     message: ChatMessage;
     proposedCommand: boolean;
     proposedEdit: boolean;
   }> {
     const summarySuffix = summarizeToolInput(toolCall.arguments);
-    options.onToolActivity?.({
+    this.options.onToolActivity?.({
       toolName: toolCall.name,
       input: toolCall.arguments,
       status: 'started',
@@ -125,8 +160,8 @@ export function createAgent(options: AgentOptions): Agent {
     });
 
     try {
-      const result = await executeToolCall(toolCall.name, toolCall.arguments, {root: options.repoMap.root});
-      options.onToolActivity?.({
+      const result = await executeToolCall(toolCall.name, toolCall.arguments, {root: this.options.repoMap.root});
+      this.options.onToolActivity?.({
         toolName: toolCall.name,
         input: toolCall.arguments,
         status: 'completed',
@@ -134,7 +169,7 @@ export function createAgent(options: AgentOptions): Agent {
       });
       const proposedCommand = getProposedCommand(result.metadata);
       if (proposedCommand) {
-        options.onToolActivity?.({
+        this.options.onToolActivity?.({
           toolName: toolCall.name,
           input: toolCall.arguments,
           status: 'proposed',
@@ -144,7 +179,7 @@ export function createAgent(options: AgentOptions): Agent {
       }
       const proposedEdit = getProposedFileEdits(result.metadata);
       if (proposedEdit) {
-        options.onToolActivity?.({
+        this.options.onToolActivity?.({
           toolName: toolCall.name,
           input: toolCall.arguments,
           status: 'edit-proposed',
@@ -163,7 +198,7 @@ export function createAgent(options: AgentOptions): Agent {
         proposedEdit: Boolean(proposedEdit)
       };
     } catch (error) {
-      options.onToolActivity?.({
+      this.options.onToolActivity?.({
         toolName: toolCall.name,
         input: toolCall.arguments,
         status: 'failed',
@@ -173,15 +208,37 @@ export function createAgent(options: AgentOptions): Agent {
     }
   }
 
-  return {
-    async ask(input: string) {
-      const messages = createInitialMessages(options.repoMap, input);
-      let toolRounds = 0;
-      let proposedCommandSeen = false;
-      let proposedEditSeen = false;
+  async ask(input: string): Promise<string> {
+    // Send repo map only on first turn
+    if (!this.repoMapSent) {
+      this.messages.push({
+        role: 'system',
+        content: [
+          '当前项目 repo map 如下。你可以使用工具读取更多项目证据。',
+          '如果你想建议用户运行命令，必须使用 propose_command 工具提出命令；命令不会自动执行，最终回答必须说明需要用户确认后才会运行。',
+          '如果用户要求修改代码，先使用只读工具检查准确内容，再使用 propose_file_edits 提出精确编辑；该工具不会写入文件，最终回答必须说明需要用户查看 Diff 并确认后才会应用。',
+          '回答时必须说明依据；如果证据不足，说明还需要检查什么。',
+          '',
+          formatRepoMap(this.options.repoMap)
+        ].join('\n')
+      });
+      this.repoMapSent = true;
+    }
 
+    this.messages.push({role: 'user', content: input});
+
+    this.abortController = new AbortController();
+    let toolRounds = 0;
+    let proposedCommandSeen = false;
+    let proposedEditSeen = false;
+
+    try {
       while (true) {
-        const response = await options.model.complete({messages, tools});
+        const response = await this.options.model.complete({
+          messages: this.messages,
+          tools: this.tools
+        });
+
         if (response.toolCalls.length === 0) {
           if (!response.content) {
             throw new Error('Model response did not include assistant content.');
@@ -193,37 +250,47 @@ export function createAgent(options: AgentOptions): Agent {
           if (proposedEditSeen) {
             content = addEditConfirmationNotice(content);
           }
+
+          this.messages.push({role: 'assistant', content});
           return content;
         }
 
-        if (toolRounds >= maxToolRounds) {
-          throw new Error(`Maximum tool rounds exceeded (${maxToolRounds}).`);
+        if (toolRounds >= this.maxToolRounds) {
+          throw new Error(`Maximum tool rounds exceeded (${this.maxToolRounds}).`);
         }
 
-        messages.push({
+        this.messages.push({
           role: 'assistant',
           content: response.content,
           toolCalls: response.toolCalls
         });
+
         for (const toolCall of response.toolCalls) {
-          const result = await runTool(toolCall);
+          const result = await this.runTool(toolCall);
           proposedCommandSeen = proposedCommandSeen || result.proposedCommand;
           proposedEditSeen = proposedEditSeen || result.proposedEdit;
-          messages.push(result.message);
+          this.messages.push(result.message);
         }
         toolRounds += 1;
       }
-    },
-
-    async summarizeCommandResult(result: CommandResult) {
-      const response = await options.model.complete({
-        messages: createCommandResultSummaryMessages(options.repoMap, result)
-      });
-      const summary = response.content.trim();
-      if (!summary) {
-        throw new Error('Model returned an empty command result summary.');
-      }
-      return summary;
+    } finally {
+      this.abortController = null;
     }
-  };
+  }
+
+  async summarizeCommandResult(result: CommandResult): Promise<string> {
+    const response = await this.options.model.complete({
+      messages: createCommandResultSummaryMessages(this.options.repoMap, result)
+    });
+    const summary = response.content.trim();
+    if (!summary) {
+      throw new Error('Model returned an empty command result summary.');
+    }
+    return summary;
+  }
+}
+
+// Keep backward compatibility
+export function createAgent(options: AgentOptions): Agent {
+  return new AgentSession(options);
 }

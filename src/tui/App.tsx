@@ -1,6 +1,7 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Box, Text} from 'ink';
-import {createAgent} from '../agent/agent.js';
+import {AgentSession} from '../agent/agent.js';
+import type {Agent} from '../agent/agent.js';
 import {runCommand} from '../commands/runner.js';
 import type {CommandRequest} from '../commands/types.js';
 import {loadConfig} from '../config/store.js';
@@ -9,6 +10,8 @@ import type {ProposedFileEdits} from '../edits/types.js';
 import {undoEditProposal} from '../edits/undo.js';
 import {prepareWorkspaceDiff} from '../git/diff.js';
 import {createOpenAICompatibleClient} from '../model/openai-compatible.js';
+import {classifyCommand} from '../permissions/policy.js';
+import type {PermissionMode} from '../permissions/types.js';
 import type {ToolActivity} from '../tools/types.js';
 import {buildRepoMap} from '../workspace/indexer.js';
 import type {RepoMap} from '../workspace/types.js';
@@ -68,12 +71,70 @@ export function App({cwd}: {cwd: string}) {
   const [pendingUndo, setPendingUndo] = useState<ProposedFileEdits | null>(null);
   const [lastAppliedEdit, setLastAppliedEdit] = useState<ProposedFileEdits | null>(null);
   const [busy, setBusy] = useState(true);
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>('default-confirm');
+  const agentRef = useRef<Agent | null>(null);
 
   useEffect(() => {
     async function boot() {
       try {
         const map = await buildRepoMap(cwd);
         setRepoMap(map);
+
+        const config = await loadConfig();
+        if (config) {
+          agentRef.current = new AgentSession({
+            model: createOpenAICompatibleClient(config),
+            repoMap: map,
+            onToolActivity(activity) {
+              if (activity.status === 'proposed' && activity.command) {
+                const {command} = activity;
+                const policy = classifyCommand(command);
+
+                if (policy.classification === 'block') {
+                  setMessages((current) => [
+                    ...current,
+                    {
+                      role: 'system',
+                      kind: 'command',
+                      content: `${formatToolActivity(activity)}\n\n⛔ 命令已被拦截：${policy.reason}`
+                    }
+                  ]);
+                  return;
+                }
+
+                setPendingCommand(command);
+                setMessages((current) => [
+                  ...current,
+                  {
+                    role: 'system',
+                    kind: 'command',
+                    content: `${formatToolActivity(activity)}\n\n${formatPendingCommand(command)}`
+                  }
+                ]);
+                return;
+              }
+              if (activity.status === 'edit-proposed' && activity.editProposal) {
+                const {editProposal} = activity;
+                setPendingEdit(editProposal);
+                setMessages((current) => [
+                  ...current,
+                  {
+                    role: 'system',
+                    kind: 'edit-proposal',
+                    content: `${formatToolActivity(activity)}\n\n${formatPendingEdit(editProposal)}`
+                  }
+                ]);
+                return;
+              }
+
+              setMessages((current) => [
+                ...current,
+                {role: 'system', kind: 'tool', content: formatToolActivity(activity)}
+              ]);
+            }
+          });
+        }
+
         setMessages((current) => [
           ...current,
           {
@@ -106,13 +167,8 @@ export function App({cwd}: {cwd: string}) {
       const result = await runCommand(map.root, command);
       let summary: string | undefined;
       try {
-        const config = await loadConfig();
-        if (config) {
-          const agent = createAgent({
-            model: createOpenAICompatibleClient(config),
-            repoMap: map
-          });
-          summary = await agent.summarizeCommandResult(result);
+        if (agentRef.current) {
+          summary = await agentRef.current.summarizeCommandResult(result);
         }
       } catch {
         // The deterministic result below remains available when model summarization fails.
@@ -338,7 +394,55 @@ export function App({cwd}: {cwd: string}) {
       return;
     }
 
-    if (input.trim().toLowerCase() === '/undo') {
+    const trimmedInput = input.trim().toLowerCase();
+
+    if (trimmedInput === '/mode' || trimmedInput.startsWith('/mode ')) {
+      setMessages(appendMessage({role: 'user', content: input}));
+      const parts = input.trim().split(/\s+/);
+
+      if (parts.length === 1) {
+        const modeNames = {
+          'default-confirm': '默认确认模式（每次操作都需要确认）',
+          'auto-accept-edits': '自动接受编辑模式（命令需确认，编辑自动应用）',
+          'read-only': '只读模式（禁止所有命令和编辑）',
+          'plan': '计划模式（禁止所有命令和编辑，仅规划）'
+        };
+        setMessages(appendMessage({
+          role: 'system',
+          kind: 'command',
+          content: `当前权限模式：${modeNames[permissionMode]}\n\n可用模式：\n- default-confirm: 默认确认模式\n- auto-accept-edits: 自动接受编辑模式\n- read-only: 只读模式\n- plan: 计划模式\n\n用法：/mode <模式名>`
+        }));
+        return;
+      }
+
+      const newMode = parts[1] as PermissionMode;
+      const validModes: PermissionMode[] = ['default-confirm', 'auto-accept-edits', 'read-only', 'plan'];
+
+      if (!validModes.includes(newMode)) {
+        setMessages(appendMessage({
+          role: 'system',
+          kind: 'command',
+          content: `无效的模式：${parts[1]}\n可用模式：default-confirm, auto-accept-edits, read-only, plan`
+        }));
+        return;
+      }
+
+      setPermissionMode(newMode);
+      const modeLabels = {
+        'default-confirm': '默认确认模式',
+        'auto-accept-edits': '自动接受编辑模式',
+        'read-only': '只读模式',
+        'plan': '计划模式'
+      };
+      setMessages(appendMessage({
+        role: 'system',
+        kind: 'command',
+        content: `已切换到 ${modeLabels[newMode]}`
+      }));
+      return;
+    }
+
+    if (trimmedInput === '/undo') {
       setMessages(appendMessage({role: 'user', content: input}));
       if (!lastAppliedEdit) {
         setMessages(appendMessage({
@@ -380,8 +484,7 @@ export function App({cwd}: {cwd: string}) {
     setBusy(true);
     setMessages((current) => [...current, {role: 'user', content: input}]);
     try {
-      const config = await loadConfig();
-      if (!config) {
+      if (!agentRef.current) {
         setMessages((current) => [
           ...current,
           {
@@ -391,44 +494,7 @@ export function App({cwd}: {cwd: string}) {
         ]);
         return;
       }
-      const agent = createAgent({
-        model: createOpenAICompatibleClient(config),
-        repoMap,
-        onToolActivity(activity) {
-          if (activity.status === 'proposed' && activity.command) {
-            const {command} = activity;
-            setPendingCommand(command);
-            setMessages((current) => [
-              ...current,
-              {
-                role: 'system',
-                kind: 'command',
-                content: `${formatToolActivity(activity)}\n\n${formatPendingCommand(command)}`
-              }
-            ]);
-            return;
-          }
-          if (activity.status === 'edit-proposed' && activity.editProposal) {
-            const {editProposal} = activity;
-            setPendingEdit(editProposal);
-            setMessages((current) => [
-              ...current,
-              {
-                role: 'system',
-                kind: 'edit-proposal',
-                content: `${formatToolActivity(activity)}\n\n${formatPendingEdit(editProposal)}`
-              }
-            ]);
-            return;
-          }
-
-          setMessages((current) => [
-            ...current,
-            {role: 'system', kind: 'tool', content: formatToolActivity(activity)}
-          ]);
-        }
-      });
-      const answer = await agent.ask(input);
+      const answer = await agentRef.current.ask(input);
       setMessages((current) => [...current, {role: 'assistant', content: answer}]);
     } catch (error) {
       setMessages((current) => [
