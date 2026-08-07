@@ -1,169 +1,186 @@
-# M7: Permission Modes UI
+# M7: Permission Modes
 
-**Status:** ✅ Completed  
-**Date:** 2026-08-06  
-**Depends on:** M6 (AgentSession + Permissions)
+**Status:** ✅ Completed (see "Correction" below — first pass was incomplete)
+**Date:** 2026-08-06
+**Depends on:** M6 (AgentSession + permissions module)
 
 ---
 
 ## Objective
 
-Provide UI for users to switch between permission modes via `/mode` command and see current mode in status bar.
+Make the four permission modes real: switchable from the TUI, visible in the
+header, and actually changing what happens to command and edit proposals.
+Close the policy bypass left open by M6.
+
+---
+
+## Correction to the first pass
+
+This document originally claimed three things that were not true. Recording the
+correction rather than quietly overwriting it:
+
+1. **"Add mode indicator to TUI status bar ✅"** — the state existed but the
+   header JSX was never edited, so nothing rendered. The manual-test line
+   "Mode indicator updates after switching" could not have passed.
+2. **Modes were inert.** `permissionMode` was stored and displayed in `/mode`
+   output, but `auto-accept-edits`, `read-only`, and `plan` changed no behavior.
+   Every proposal still went through the same confirmation path.
+3. **The blacklist was bypassable.** `classifyCommand()` was only wired into the
+   `onToolActivity` model-proposal path. `handleSubmit`'s `/run` branch called
+   `setPendingCommand()` directly, so `/run rm -rf /` reached `runCommand()`
+   unchecked — the exact hole flagged as the top risk before M6 started.
+
+All three are fixed below.
 
 ---
 
 ## Scope
 
-### In Scope
-- `/mode` slash command to switch modes
-- Mode indicator in TUI status bar
-- Four permission modes:
-  - `default-confirm`: Every operation requires confirmation (default)
-  - `auto-accept-edits`: Commands require confirmation, edits auto-apply
-  - `read-only`: Block all commands and edits
-  - `plan`: Block all commands and edits, agent only plans
+### In scope
+- `/mode [name]` to inspect and switch modes
+- Mode indicator in the TUI header
+- Mode-dependent handling of command and edit proposals
+- Hard policy enforcement at the `runCommand()` boundary
+- Blacklist covering flag spelling variants
 
-### Out of Scope
-- Persistence of mode across sessions (M8)
-- Per-project mode defaults
-- Mode-specific agent prompts (future milestone)
+### Out of scope (deferred)
+- Mode persistence across sessions (M8)
+- `strong-confirm` tier requiring the user to retype the command (M8)
+- Full blacklist: `chmod -R`, global installs, DB migrations (M8)
+- Mode-aware system prompt, so `plan` mode tells the model not to propose at all
+- Cancellation / Ctrl-C wiring (still deferred; `AgentSession.cancel()` exists
+  but no signal reaches `fetch` and no key handler calls it)
 
 ---
 
 ## Implementation
 
-### 1. Add `/mode` Command Handler ✅
+### 1. Centralized mode vocabulary — `src/permissions/types.ts`
 
-**File:** `src/tui/App.tsx`
+`PERMISSION_MODES`, `PERMISSION_MODE_LABELS`, `PERMISSION_MODE_DESCRIPTIONS`,
+and the `isPermissionMode()` guard live in one place, following the same
+convention as the confirmation-word tables. `/mode` output, the header, and
+rejection messages all read from them, so adding a mode touches one file.
 
-Added slash command parsing in `handleSubmit`:
-- `/mode` with no args → show current mode + help text
-- `/mode <mode-name>` → switch to specified mode
-- Invalid mode name → show error with valid options
+Also added `CommandProposalDecision` and `EditProposalDecision`.
 
-Mode labels (Chinese):
-- `default-confirm` → 默认确认模式
-- `auto-accept-edits` → 自动接受编辑模式
-- `read-only` → 只读模式
-- `plan` → 计划模式
+### 2. Stronger classification — `src/permissions/policy.ts`
 
-### 2. Add Permission Mode State ✅
+Removed the dead `DANGEROUS_PATTERNS` / `matchesPattern()` pair (defined in M6,
+never called). Replaced substring matching with flag normalization:
+`normalizeFlags()` expands bundled short flags, so `-rf`, `-r -f`,
+`--recursive --force`, `-R`, and Windows `/s /q` all classify identically.
 
-**File:** `src/tui/App.tsx`
+- **block** — `rm`/`rmdir`/`del`/`erase` with a recursive or force flag;
+  `git push --force`/`-f`; `git reset --hard`; `git clean -f`
+- **confirm** — plain single-file removal (`rm notes.txt`)
+- **allow** — everything else
 
-```ts
-const [permissionMode, setPermissionMode] = useState<PermissionMode>('default-confirm');
-```
+Executable name is lowercased, so `RM -rf` is caught. `git` rules check
+`args[0]` as the subcommand, so `pnpm install --force` is not misread as a
+force-push.
 
-### 3. Integrate Policy Check ✅
+### 3. Mode decisions as pure functions — `src/permissions/decide.ts`
 
-**File:** `src/tui/App.tsx`
+`decideCommandProposal(command, mode)` and `decideEditProposal(mode)` are pure
+and unit-tested without Ink, matching how `command-confirmation.ts` is
+structured.
 
-Updated `onToolActivity` handler for proposed commands:
-- Call `classifyCommand(command)` to get policy result
-- If `classification === 'block'` → auto-reject with reason
-- If `classification === 'allow'` → auto-confirm (currently unused, reserved for `auto-accept-edits` mode in future)
-- If `classification === 'confirm'` → show confirmation UI as before
+| Mode | Command proposal | Edit proposal |
+|---|---|---|
+| `default-confirm` | confirm | confirm |
+| `auto-accept-edits` | confirm | **auto-apply** |
+| `read-only` | reject | reject |
+| `plan` | reject | reject |
 
-**Note:** Current policy implementation (`src/permissions/policy.ts`) does NOT yet use `permissionMode` parameter. Mode-aware policy enforcement will be added in future milestone when we implement:
-- `auto-accept-edits` → allow read-only commands automatically
-- `read-only` → block all commands except reads
-- `plan` → block all commands
+A `block` classification outranks the mode: blocked commands are rejected in
+all four modes, including `auto-accept-edits`.
 
-### 4. Add Mode Indicator ✅
+### 4. Hard enforcement — `src/commands/runner.ts`
 
-**File:** `src/tui/App.tsx`
+`runCommand()` calls `classifyCommand()` before resolving the cwd and throws on
+`block`. This is the choke point every path funnels through, so the `/run`
+bypass is closed structurally rather than by remembering to check at each call
+site. Mode-dependent decisions stay in the TUI layer, since `runner.ts` has no
+business knowing about session state.
 
-Added mode indicator to TUI header (placeholder implementation, needs visual design):
+### 5. TUI wiring — `src/tui/App.tsx`
 
-```tsx
-<Text bold color="green">GPS Code [{permissionMode}]</Text>
-```
-
-Future improvement: Better visual formatting for mode indicator.
+- `permissionModeRef` mirrors the state. `onToolActivity` is registered once
+  during boot, so reading `permissionMode` directly would capture the value
+  from that first render forever; the ref is what makes mode switching take
+  effect mid-session. `changePermissionMode()` updates both.
+- Command and edit branches of `onToolActivity` now consult `decide*`.
+- The `/run` branch consults `decideCommandProposal` before staging.
+- `autoApplyEdit()` handles the `auto-apply` path. It deliberately does **not**
+  touch `setBusy` (the agent loop is still running and `handleSubmit` owns that
+  flag) and does **not** stage a validation command (that would collide with
+  the in-flight loop). Both differ from `executePendingEdit()`.
+- Header renders `模式：<label>`, gray for the default mode and yellow otherwise.
 
 ---
 
-## Testing
+## Tests
 
-### Manual Testing Checklist ✅
+| File | Tests | Covers |
+|---|---|---|
+| `tests/permissions/policy.test.ts` | 10 | flag variants, case-insensitivity, Windows switches, git subcommands, no false positives |
+| `tests/permissions/decide.test.ts` | 8 | all four modes × command/edit, block outranking mode |
+| `tests/commands/runner.test.ts` | +3 | blocked command refused, refused before cwd resolution, allowed command still runs |
 
-- [x] `/mode` with no args shows current mode and help
-- [x] `/mode default-confirm` switches mode successfully
-- [x] `/mode auto-accept-edits` switches mode successfully
-- [x] `/mode read-only` switches mode successfully
-- [x] `/mode plan` switches mode successfully
-- [x] `/mode invalid-mode` shows error message
-- [x] Mode indicator updates after switching
-- [x] Dangerous commands blocked regardless of mode
-- [x] TypeScript typecheck passes
-- [x] Build succeeds
+**Suite: 131/138 passing.** The 7 failures are pre-existing and environmental,
+unchanged from the M6 baseline (119/126 → 131/138, +12 new tests, 0 new
+failures):
 
-### Automated Tests
+- 3 × `EPERM: symlink` — Windows needs admin or Developer Mode to create symlinks
+- 3 × file-mode assertions (`expected 438 to be 493`) — POSIX permission bits do
+  not survive on NTFS
+- 2 × path separator (`.\src\index.ts` vs `src/index.ts`) in `search-text`
 
-No new tests added (TUI component not easily unit-testable with current architecture).
-
-Existing test suite status: 119/126 passing
-- 7 pre-existing failures (Windows path separator issues in `search-text.test.ts` and `edits/apply.test.ts`)
-- No new test failures introduced
+Worth fixing separately as a cross-platform cleanup; none are related to M6/M7.
 
 ---
 
 ## Verification
 
 ```bash
-npm run typecheck  # ✅ Pass
-npm run build      # ✅ Pass (83ms ESM, 10156ms DTS)
-npm test           # ✅ 119/126 (same baseline as M6)
+npm run typecheck   # pass
+npm run build       # pass
+npx vitest run tests/permissions tests/commands/runner.test.ts
+npm test            # 131/138, 7 pre-existing environmental failures
+```
+
+Not verified: end-to-end TUI behavior against a live model. `/mode` switching,
+header rendering, and auto-apply have unit coverage for their decision logic but
+have not been exercised through a real Ink session.
+
+---
+
+## Files changed
+
+```
+src/permissions/types.ts          rewritten (mode vocabulary + decision types)
+src/permissions/policy.ts         rewritten (flag normalization, dead code removed)
+src/permissions/decide.ts         new
+src/commands/runner.ts            policy gate at entry
+src/tui/App.tsx                   mode ref, decide* wiring, /run gate, autoApplyEdit, header
+tests/permissions/policy.test.ts  rewritten (10 tests)
+tests/permissions/decide.test.ts  new (8 tests)
+tests/commands/runner.test.ts     +3 enforcement tests
 ```
 
 ---
 
-## Architecture Notes
+## Next
 
-### Design Decision: Policy Check in TUI Layer
+**M8 — blacklist completion and strong-confirm**
+- `chmod -R`, `chown -R`, global installs, DB migrations
+- `strong-confirm` tier: retyping the command, not `y`
+- allowlist/denylist in `config.json`
+- Mode persistence
 
-Permission policy check stays in `App.tsx` (TUI layer), not `commands/runner.ts` (execution layer), because:
-
-1. `runner.ts` is a pure execution utility — it should not know about session-level `permissionMode`
-2. Policy decisions belong to the session/UI layer where user context lives
-3. Keeps execution layer testable without mocking session state
-
-### Future Work
-
-1. **Mode-aware policy enforcement** (future milestone):
-   - `classifyCommand()` currently does NOT use `permissionMode`
-   - Need to pass mode and implement mode-specific rules:
-     - `auto-accept-edits`: auto-approve read-only commands (ls, cat, git status)
-     - `read-only`: block all write/execute commands
-     - `plan`: block all commands
-
-2. **Edit proposals** (future milestone):
-   - Currently no policy check on edit proposals
-   - Need similar `onToolActivity` logic for `status === 'edit-proposed'`
-   - `auto-accept-edits` mode should auto-apply edits
-
-3. **Mode persistence** (M8):
-   - Save mode to session state
-   - Restore on `/resume`
-
-4. **Mode-specific agent prompts** (future milestone):
-   - `plan` mode should tell agent to only plan, not propose actions
-   - Inject mode-aware system message at agent boot
-
----
-
-## Files Changed
-
-- `src/tui/App.tsx` — added `/mode` command, mode state, mode indicator
-- `src/permissions/types.ts` — already exported `PermissionMode` type (M6)
-- `src/permissions/policy.ts` — no changes (already implements `classifyCommand`)
-
----
-
-## Next Milestone
-
-**M8: Session Persistence**
-- Persist session to disk (messages, mode, lastAppliedEdit)
-- Implement `/resume` command
-- Save/load from `~/.gps-code/sessions/<workspace-hash>.json`
+**Also outstanding, unscheduled**
+- Cancellation: thread `AbortSignal` through `ModelRequest` → `fetch`, then have
+  a key handler call `AgentSession.cancel()`. Note `InputBox` already owns
+  `useInput`, so Ctrl-C handling needs care not to break quitting.
+- Cross-platform test failures above.

@@ -51,6 +51,30 @@ Target capability: a developer can hand GPS Code a real task on a real repo ("re
 | **Git Integration** | Read-only diff (exists), auto-stage/commit (new) | **Partial** | `git/diff.ts`, `git/stage.ts` (new in M11) |
 | **Project Config** | GPS.md parsing, MCP client, hooks | **New** (M12) | `workspace/gps-md.ts`, `mcp/client.ts`, `hooks/runner.ts` |
 
+## Roadmap Amendment (2026-08-06, after M6/M7 shipped)
+
+The roadmap below was written before implementation. What actually shipped
+differs, and the numbering has been amended rather than silently corrected:
+
+- **M6 as shipped** covered the `AgentSession` refactor, tool-result truncation,
+  send-repo-map-once, and the *infrastructure* for permissions — but the mode
+  system was inert and the blacklist was bypassable via `/run`.
+- **M7 as shipped** is therefore **Permission Modes**, not "Edit Capability
+  Extension": it made the four modes actually change behavior, closed the `/run`
+  bypass by enforcing policy inside `runCommand()`, and added the header
+  indicator. See `plans/2026-08-06-gps-code-m7-permission-modes.md`, which also
+  records three claims the first pass of that document made falsely.
+- **Everything from M7 onward below shifts by one.** "Edit Capability Extension"
+  becomes M8; "Complete Blacklist + Tool-Calling Degradation" merges its
+  blacklist half into M8 and its degradation half into M9.
+- **Cancellation is still not done.** `AgentSession.cancel()` and its
+  `AbortController` exist, but no `AbortSignal` reaches `fetch` and no key
+  handler calls `cancel()`. It was listed in M6 scope and did not ship. Note
+  that `InputBox` already owns Ink's `useInput`, so Ctrl-C wiring needs care.
+
+Treat the milestone *contents* below as still valid and the *numbers* as
+off-by-one past M6.
+
 ## Long-Term Roadmap: M6-M12
 
 ### M6 — Agent Session + Permission Modes + Lightweight Context Management

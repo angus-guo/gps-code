@@ -51,6 +51,24 @@ GPS Code 是面向个人开发者的中文优先 AI coding agent，尤其适合�
 | **Git 集成** | 只读 diff（已有），自动 stage/commit（新） | **部分存在** | `git/diff.ts`, `git/stage.ts`（M11 新增） |
 | **项目配置** | GPS.md 解析，MCP 客户端，hooks | **新增**（M12） | `workspace/gps-md.ts`, `mcp/client.ts`, `hooks/runner.ts` |
 
+## 路线图修订（2026-08-06，M6/M7 交付后）
+
+下面的路线图写于实施之前。实际交付的内容与之有差异，这里记录修订而不是悄悄改掉：
+
+- **实际交付的 M6** 包含 `AgentSession` 重构、工具结果截断、repo map 只发一次，
+  以及权限系统的*基础设施* —— 但四档模式是无效的，黑名单可以通过 `/run` 绕过。
+- **因此实际交付的 M7 是「权限模式」**，不是下面写的「编辑能力扩展」：它让四档模式
+  真正改变行为，通过在 `runCommand()` 内部强制策略堵住了 `/run` 绕过，并加上了状态栏
+  指示器。详见 `plans/2026-08-06-gps-code-m7-permission-modes.md`，那份文档也记录了
+  它第一版中三处不实的声明。
+- **下面从 M7 开始的所有编号顺延一位。**「编辑能力扩展」变成 M8；「完整黑名单 +
+  Tool-calling 降级」的黑名单部分并入 M8，降级部分并入 M9。
+- **取消功能仍未完成。** `AgentSession.cancel()` 和 `AbortController` 存在，但没有
+  `AbortSignal` 传到 `fetch`，也没有按键处理去调 `cancel()`。它列在 M6 范围内但没有交付。
+  注意 `InputBox` 已经占用了 Ink 的 `useInput`，接 Ctrl-C 需要小心。
+
+下面各里程碑的*内容*仍然有效，但 M6 之后的*编号*要顺延一位来读。
+
 ## 长期路线图：M6-M12
 
 ### M6 — Agent Session + 权限模式 + 轻量上下文管理

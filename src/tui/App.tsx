@@ -10,8 +10,14 @@ import type {ProposedFileEdits} from '../edits/types.js';
 import {undoEditProposal} from '../edits/undo.js';
 import {prepareWorkspaceDiff} from '../git/diff.js';
 import {createOpenAICompatibleClient} from '../model/openai-compatible.js';
-import {classifyCommand} from '../permissions/policy.js';
-import type {PermissionMode} from '../permissions/types.js';
+import {decideCommandProposal, decideEditProposal} from '../permissions/decide.js';
+import {
+  PERMISSION_MODES,
+  PERMISSION_MODE_DESCRIPTIONS,
+  PERMISSION_MODE_LABELS,
+  isPermissionMode,
+  type PermissionMode
+} from '../permissions/types.js';
 import type {ToolActivity} from '../tools/types.js';
 import {buildRepoMap} from '../workspace/indexer.js';
 import type {RepoMap} from '../workspace/types.js';
@@ -73,6 +79,14 @@ export function App({cwd}: {cwd: string}) {
   const [busy, setBusy] = useState(true);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default-confirm');
   const agentRef = useRef<Agent | null>(null);
+  // onToolActivity is registered once at boot, so it must read the mode through
+  // a ref rather than closing over the state value from that first render.
+  const permissionModeRef = useRef<PermissionMode>('default-confirm');
+
+  function changePermissionMode(mode: PermissionMode) {
+    permissionModeRef.current = mode;
+    setPermissionMode(mode);
+  }
 
   useEffect(() => {
     async function boot() {
@@ -88,15 +102,15 @@ export function App({cwd}: {cwd: string}) {
             onToolActivity(activity) {
               if (activity.status === 'proposed' && activity.command) {
                 const {command} = activity;
-                const policy = classifyCommand(command);
+                const decision = decideCommandProposal(command, permissionModeRef.current);
 
-                if (policy.classification === 'block') {
+                if (decision.action === 'reject') {
                   setMessages((current) => [
                     ...current,
                     {
                       role: 'system',
                       kind: 'command',
-                      content: `${formatToolActivity(activity)}\n\n⛔ 命令已被拦截：${policy.reason}`
+                      content: `${formatToolActivity(activity)}\n\n已拒绝该命令：${decision.reason ?? '不符合当前权限策略。'}`
                     }
                   ]);
                   return;
@@ -115,6 +129,33 @@ export function App({cwd}: {cwd: string}) {
               }
               if (activity.status === 'edit-proposed' && activity.editProposal) {
                 const {editProposal} = activity;
+                const decision = decideEditProposal(permissionModeRef.current);
+
+                if (decision.action === 'reject') {
+                  setMessages((current) => [
+                    ...current,
+                    {
+                      role: 'system',
+                      kind: 'edit-proposal',
+                      content: `${formatToolActivity(activity)}\n\n已拒绝该编辑：${decision.reason ?? '不符合当前权限策略。'}`
+                    }
+                  ]);
+                  return;
+                }
+
+                if (decision.action === 'auto-apply') {
+                  setMessages((current) => [
+                    ...current,
+                    {
+                      role: 'system',
+                      kind: 'edit-proposal',
+                      content: `${formatToolActivity(activity)}\n\n${decision.reason ?? ''}`
+                    }
+                  ]);
+                  void autoApplyEdit(editProposal, map);
+                  return;
+                }
+
                 setPendingEdit(editProposal);
                 setMessages((current) => [
                   ...current,
@@ -283,6 +324,29 @@ export function App({cwd}: {cwd: string}) {
     }
   }
 
+  /**
+   * Applies an edit without confirmation for `auto-accept-edits`. This runs
+   * while the agent loop is still active, so it must not own the busy flag and
+   * must not stage a pending validation command that would collide with it.
+   */
+  async function autoApplyEdit(proposed: ProposedFileEdits, map: RepoMap) {
+    try {
+      const result = await applyEditProposal(map.root, proposed.proposal);
+      setLastAppliedEdit(proposed);
+      setMessages(appendMessage({
+        role: 'system',
+        kind: 'edit-result',
+        content: formatEditResult(result)
+      }));
+    } catch (error) {
+      setMessages(appendMessage({
+        role: 'system',
+        kind: 'edit-result',
+        content: formatEditError(error)
+      }));
+    }
+  }
+
   async function executePendingUndo(proposed: ProposedFileEdits, map: RepoMap) {
     setBusy(true);
     setMessages(appendMessage({
@@ -399,45 +463,41 @@ export function App({cwd}: {cwd: string}) {
     if (trimmedInput === '/mode' || trimmedInput.startsWith('/mode ')) {
       setMessages(appendMessage({role: 'user', content: input}));
       const parts = input.trim().split(/\s+/);
+      const modeList = PERMISSION_MODES
+        .map((mode) => `- ${mode}：${PERMISSION_MODE_DESCRIPTIONS[mode]}`)
+        .join('\n');
 
       if (parts.length === 1) {
-        const modeNames = {
-          'default-confirm': '默认确认模式（每次操作都需要确认）',
-          'auto-accept-edits': '自动接受编辑模式（命令需确认，编辑自动应用）',
-          'read-only': '只读模式（禁止所有命令和编辑）',
-          'plan': '计划模式（禁止所有命令和编辑，仅规划）'
-        };
         setMessages(appendMessage({
           role: 'system',
           kind: 'command',
-          content: `当前权限模式：${modeNames[permissionMode]}\n\n可用模式：\n- default-confirm: 默认确认模式\n- auto-accept-edits: 自动接受编辑模式\n- read-only: 只读模式\n- plan: 计划模式\n\n用法：/mode <模式名>`
+          content: [
+            `当前权限模式：${PERMISSION_MODE_LABELS[permissionMode]}（${PERMISSION_MODE_DESCRIPTIONS[permissionMode]}）`,
+            '',
+            '可用模式：',
+            modeList,
+            '',
+            '用法：/mode <模式名>'
+          ].join('\n')
         }));
         return;
       }
 
-      const newMode = parts[1] as PermissionMode;
-      const validModes: PermissionMode[] = ['default-confirm', 'auto-accept-edits', 'read-only', 'plan'];
-
-      if (!validModes.includes(newMode)) {
+      const requested = parts[1];
+      if (!isPermissionMode(requested)) {
         setMessages(appendMessage({
           role: 'system',
           kind: 'command',
-          content: `无效的模式：${parts[1]}\n可用模式：default-confirm, auto-accept-edits, read-only, plan`
+          content: `无效的模式：${requested}\n\n可用模式：\n${modeList}`
         }));
         return;
       }
 
-      setPermissionMode(newMode);
-      const modeLabels = {
-        'default-confirm': '默认确认模式',
-        'auto-accept-edits': '自动接受编辑模式',
-        'read-only': '只读模式',
-        'plan': '计划模式'
-      };
+      changePermissionMode(requested);
       setMessages(appendMessage({
         role: 'system',
         kind: 'command',
-        content: `已切换到 ${modeLabels[newMode]}`
+        content: `已切换到${PERMISSION_MODE_LABELS[requested]}：${PERMISSION_MODE_DESCRIPTIONS[requested]}`
       }));
       return;
     }
@@ -464,6 +524,21 @@ export function App({cwd}: {cwd: string}) {
     try {
       const command = parseManualCommandProposal(input);
       if (command) {
+        // The manual /run path goes through the same policy as model proposals.
+        const decision = decideCommandProposal(command, permissionMode);
+        if (decision.action === 'reject') {
+          setMessages((current) => [
+            ...current,
+            {role: 'user', content: input},
+            {
+              role: 'system',
+              kind: 'command',
+              content: `已拒绝该命令：${decision.reason ?? '不符合当前权限策略。'}`
+            }
+          ]);
+          return;
+        }
+
         setPendingCommand(command);
         setMessages((current) => [
           ...current,
@@ -508,7 +583,13 @@ export function App({cwd}: {cwd: string}) {
 
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Text bold color="green">GPS Code</Text>
+      <Box>
+        <Text bold color="green">GPS Code</Text>
+        <Text color="gray">{'  '}模式：</Text>
+        <Text color={permissionMode === 'default-confirm' ? 'gray' : 'yellow'}>
+          {PERMISSION_MODE_LABELS[permissionMode]}
+        </Text>
+      </Box>
       <ChatView messages={messages} />
       <InputBox
         disabled={!canChat || busy}

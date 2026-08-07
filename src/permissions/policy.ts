@@ -1,62 +1,70 @@
 import type {CommandRequest} from '../commands/types.js';
 import type {CommandPolicyResult} from './types.js';
 
-const DANGEROUS_COMMANDS = new Set([
-  'rm',
-  'rmdir',
-  'del'
-]);
+const FILE_REMOVAL_COMMANDS = new Set(['rm', 'rmdir', 'del', 'erase']);
 
-const DANGEROUS_PATTERNS = [
-  {command: 'git', args: ['push', '--force']},
-  {command: 'git', args: ['push', '-f']},
-  {command: 'git', args: ['reset', '--hard']}
-];
-
-function matchesPattern(request: CommandRequest, pattern: {command: string; args: string[]}): boolean {
-  if (request.command !== pattern.command) {
-    return false;
+/**
+ * Expands bundled short flags so `-rf` is treated the same as `-r -f`.
+ * Long flags are kept intact; non-flag arguments are dropped.
+ */
+function normalizeFlags(args: readonly string[]): Set<string> {
+  const flags = new Set<string>();
+  for (const arg of args) {
+    if (arg.startsWith('--')) {
+      flags.add(arg.toLowerCase());
+      continue;
+    }
+    if (arg.startsWith('-') && arg.length > 1) {
+      for (const char of arg.slice(1)) {
+        flags.add(`-${char.toLowerCase()}`);
+      }
+      continue;
+    }
+    // Windows-style switches such as `/s` and `/q`.
+    if (arg.startsWith('/') && arg.length === 2) {
+      flags.add(arg.toLowerCase());
+    }
   }
-  const requestArgs = request.args ?? [];
-  return pattern.args.every((arg, index) => requestArgs[index] === arg);
+  return flags;
+}
+
+function hasFlag(flags: Set<string>, ...candidates: string[]): boolean {
+  return candidates.some((candidate) => flags.has(candidate));
+}
+
+function blocked(reason: string): CommandPolicyResult {
+  return {classification: 'block', reason};
 }
 
 export function classifyCommand(request: CommandRequest): CommandPolicyResult {
-  const command = request.command;
+  const command = request.command.toLowerCase();
   const args = request.args ?? [];
+  const flags = normalizeFlags(args);
 
-  // Block: rm -rf
-  if (command === 'rm' && args.includes('-rf')) {
-    return {
-      classification: 'block',
-      reason: 'rm -rf 是危险操作，可能删除大量文件。'
-    };
-  }
-
-  // Block: git push --force / -f
-  if (command === 'git' && (args.includes('push')) && (args.includes('--force') || args.includes('-f'))) {
-    return {
-      classification: 'block',
-      reason: 'git push --force 会覆盖远程历史，可能导致他人工作丢失。'
-    };
-  }
-
-  // Block: git reset --hard
-  if (command === 'git' && args.includes('reset') && args.includes('--hard')) {
-    return {
-      classification: 'block',
-      reason: 'git reset --hard 会丢弃未提交的本地修改。'
-    };
-  }
-
-  // Confirm: other dangerous commands (base list)
-  if (DANGEROUS_COMMANDS.has(command)) {
+  if (FILE_REMOVAL_COMMANDS.has(command)) {
+    const recursive = hasFlag(flags, '-r', '-R', '--recursive', '/s');
+    const forced = hasFlag(flags, '-f', '--force', '/q');
+    if (recursive || forced) {
+      return blocked(`${command} 携带递归或强制删除参数，可能删除大量文件且无法恢复。`);
+    }
     return {
       classification: 'confirm',
-      reason: `${command} 可能修改或删除文件。`
+      reason: `${command} 会删除文件。`
     };
   }
 
-  // Allow: everything else
+  if (command === 'git') {
+    const subcommand = args[0];
+    if (subcommand === 'push' && hasFlag(flags, '-f', '--force')) {
+      return blocked('git push --force 会覆盖远程历史，可能导致他人的提交丢失。');
+    }
+    if (subcommand === 'reset' && hasFlag(flags, '--hard')) {
+      return blocked('git reset --hard 会丢弃工作区中未提交的修改。');
+    }
+    if (subcommand === 'clean' && hasFlag(flags, '-f', '--force')) {
+      return blocked('git clean -f 会删除未跟踪的文件，且不进入回收站。');
+    }
+  }
+
   return {classification: 'allow'};
 }

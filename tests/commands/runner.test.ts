@@ -17,6 +17,35 @@ afterEach(async () => {
   tempDirs = [];
 });
 
+describe('runCommand policy enforcement', () => {
+  it('refuses a blocked command before touching the filesystem', async () => {
+    const root = await makeRoot();
+
+    await expect(runCommand(root, {command: 'rm', args: ['-rf', 'src']}))
+      .rejects.toThrow(/blocked by policy/i);
+  });
+
+  it('refuses a blocked command even when the cwd is invalid', async () => {
+    // Policy runs before cwd resolution, so the policy error is what surfaces.
+    const root = await makeRoot();
+
+    await expect(runCommand(root, {command: 'git', args: ['push', '--force'], cwd: '../escape'}))
+      .rejects.toThrow(/blocked by policy/i);
+  });
+
+  it('still runs commands that policy allows', async () => {
+    const root = await makeRoot();
+
+    const result = await runCommand(root, {
+      command: process.execPath,
+      args: ['-e', 'console.log("allowed")']
+    });
+
+    expect(result.stdout).toContain('allowed');
+    expect(result.exitCode).toBe(0);
+  });
+});
+
 describe('runCommand', () => {
   it('runs an argv-style command in the workspace', async () => {
     const root = await makeRoot();

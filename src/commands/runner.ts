@@ -2,6 +2,7 @@ import {realpath, stat} from 'node:fs/promises';
 import {isAbsolute, relative} from 'node:path';
 import {execa} from 'execa';
 import {z} from 'zod';
+import {classifyCommand} from '../permissions/policy.js';
 import {resolveWorkspacePath} from '../tools/path-safety.js';
 import type {CommandRequest, CommandResult} from './types.js';
 
@@ -101,6 +102,14 @@ function buildResult(
 
 export async function runCommand(root: string, request: CommandRequest): Promise<CommandResult> {
   const parsed = commandRequestSchema.parse(request);
+
+  // Hard enforcement point: no caller, including the manual /run path, can
+  // execute a blocked command. Mode-dependent decisions stay in the TUI layer.
+  const policy = classifyCommand(parsed);
+  if (policy.classification === 'block') {
+    throw new Error(`Command is blocked by policy: ${policy.reason ?? parsed.command}`);
+  }
+
   const cwd = await resolveCommandCwd(root, parsed);
   const startedAt = Date.now();
 
