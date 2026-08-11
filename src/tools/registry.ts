@@ -72,8 +72,8 @@ const toolParameterSchemas: Record<string, ModelToolDefinition['function']['para
       files: {
         type: 'array',
         minItems: 1,
-        maxItems: 5,
-        description: 'Small set of workspace text files to create or update.',
+        maxItems: 20,
+        description: 'Workspace text files to create or update.',
         items: {
           type: 'object',
           properties: {
@@ -83,16 +83,16 @@ const toolParameterSchemas: Record<string, ModelToolDefinition['function']['para
             operations: {
               type: 'array',
               minItems: 1,
-              maxItems: 20,
+              maxItems: 50,
               description: 'Exact text replacements applied in order.',
               items: {
                 type: 'object',
                 properties: {
                   oldText: {
                     type: 'string',
-                    description: 'Exact unique current text. Use an empty string only when creating a file.'
+                    description: 'Exact unique current text. Use an empty string to create a file, or to replace an entire existing file when it is the only operation for that file.'
                   },
-                  newText: {type: 'string', description: 'Replacement text or complete new file content.'}
+                  newText: {type: 'string', description: 'Replacement text, or the complete file content when oldText is empty.'}
                 },
                 required: ['oldText', 'newText'],
                 additionalProperties: false

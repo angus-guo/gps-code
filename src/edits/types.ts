@@ -1,5 +1,8 @@
-export const MAX_EDIT_FILES = 5;
-export const MAX_EDIT_OPERATIONS = 20;
+export const MAX_EDIT_FILES = 20;
+/** Cap on operations within a single file. */
+export const MAX_EDIT_OPERATIONS_PER_FILE = 50;
+/** Cap on operations summed across every file in one proposal. */
+export const MAX_EDIT_OPERATIONS_TOTAL = 200;
 export const MAX_EDIT_TEXT_BYTES = 512_000;
 export const MAX_EDIT_FILE_BYTES = 1_000_000;
 export const DEFAULT_MAX_EDIT_PATCH_BYTES = 32_000;

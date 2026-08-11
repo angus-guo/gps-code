@@ -8,6 +8,7 @@ import {
   executeToolCall,
   getToolDefinitionsForModel
 } from '../../src/tools/registry.js';
+import {MAX_EDIT_FILES, MAX_EDIT_OPERATIONS_PER_FILE} from '../../src/edits/types.js';
 
 let tempDirs: string[] = [];
 
@@ -146,7 +147,7 @@ describe('tool registry', () => {
               files: {
                 type: 'array',
                 minItems: 1,
-                maxItems: 5,
+                maxItems: MAX_EDIT_FILES,
                 description: expect.any(String),
                 items: {
                   type: 'object',
@@ -157,7 +158,7 @@ describe('tool registry', () => {
                     operations: {
                       type: 'array',
                       minItems: 1,
-                      maxItems: 20,
+                      maxItems: MAX_EDIT_OPERATIONS_PER_FILE,
                       description: expect.any(String),
                       items: {
                         type: 'object',

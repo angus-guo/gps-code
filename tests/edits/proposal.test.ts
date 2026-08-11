@@ -3,7 +3,12 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
 import {prepareEditProposal} from '../../src/edits/proposal.js';
-import {MAX_EDIT_FILES, MAX_EDIT_TEXT_BYTES} from '../../src/edits/types.js';
+import {
+  MAX_EDIT_FILES,
+  MAX_EDIT_OPERATIONS_PER_FILE,
+  MAX_EDIT_OPERATIONS_TOTAL,
+  MAX_EDIT_TEXT_BYTES
+} from '../../src/edits/types.js';
 import {canCreateSymlinks} from '../helpers/fs-capabilities.js';
 
 let tempDirs: string[] = [];
@@ -202,19 +207,129 @@ describe('prepareEditProposal', () => {
       files
     })).rejects.toThrow();
 
-    await writeFile(join(root, 'many.ts'), Array.from({length: 21}, (_, index) => `v${index}`).join('\n'));
+    const perFileCount = MAX_EDIT_OPERATIONS_PER_FILE + 1;
+    await writeFile(
+      join(root, 'many.ts'),
+      Array.from({length: perFileCount}, (_, index) => `v${index}`).join('\n')
+    );
     await expect(prepareEditProposal(root, {
-      summary: '过多操作',
+      summary: '单文件操作过多',
       files: [{
         path: 'many.ts',
-        reason: '超出操作限制',
+        reason: '超出单文件操作限制',
         action: 'update',
-        operations: Array.from({length: 21}, (_, index) => ({
+        operations: Array.from({length: perFileCount}, (_, index) => ({
           oldText: `v${index}`,
           newText: `x${index}`
         }))
       }]
     })).rejects.toThrow(/too many operations|Array must contain at most/i);
+  });
+
+  it('enforces the total operation budget across files', async () => {
+    const root = await makeRoot();
+    // Each file stays under the per-file cap; only the sum exceeds the total.
+    const perFile = MAX_EDIT_OPERATIONS_PER_FILE;
+    const fileCount = Math.ceil((MAX_EDIT_OPERATIONS_TOTAL + 1) / perFile);
+    expect(fileCount).toBeLessThanOrEqual(MAX_EDIT_FILES);
+
+    const files = await Promise.all(
+      Array.from({length: fileCount}, async (_, fileIndex) => {
+        const path = `file-${fileIndex}.ts`;
+        await writeFile(
+          join(root, path),
+          Array.from({length: perFile}, (_, index) => `v${index}`).join('\n'),
+          'utf8'
+        );
+        return {
+          path,
+          reason: '超出总操作限制',
+          action: 'update' as const,
+          operations: Array.from({length: perFile}, (_, index) => ({
+            oldText: `v${index}`,
+            newText: `x${index}`
+          }))
+        };
+      })
+    );
+
+    await expect(prepareEditProposal(root, {summary: '总操作过多', files}))
+      .rejects.toThrow(/too many operations/i);
+  });
+
+  it('replaces a whole file when the only operation has empty oldText', async () => {
+    const root = await makeRoot();
+    await writeFile(join(root, 'app.ts'), 'old line one\nold line two\n', 'utf8');
+
+    const proposal = await prepareEditProposal(root, {
+      summary: '整体重写',
+      files: [{
+        path: 'app.ts',
+        reason: '结构改动过大，逐段替换不可行',
+        action: 'update',
+        operations: [{oldText: '', newText: 'brand new content\n'}]
+      }]
+    });
+
+    expect(proposal.files[0]).toMatchObject({
+      action: 'update',
+      originalContent: 'old line one\nold line two\n',
+      proposedContent: 'brand new content\n'
+    });
+    // Staleness protection must survive the whole-file path.
+    expect(proposal.files[0].expectedHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(await readFile(join(root, 'app.ts'), 'utf8')).toBe('old line one\nold line two\n');
+  });
+
+  it('rejects a whole-file rewrite that changes nothing', async () => {
+    const root = await makeRoot();
+    await writeFile(join(root, 'app.ts'), 'unchanged\n', 'utf8');
+
+    await expect(prepareEditProposal(root, {
+      summary: '无变化的整体重写',
+      files: [{
+        path: 'app.ts',
+        reason: '内容相同',
+        action: 'update',
+        operations: [{oldText: '', newText: 'unchanged\n'}]
+      }]
+    })).rejects.toThrow(/does not change content/i);
+  });
+
+  it('rejects an empty oldText mixed with other operations', async () => {
+    const root = await makeRoot();
+    await writeFile(join(root, 'app.ts'), 'alpha\nbeta\n', 'utf8');
+
+    await expect(prepareEditProposal(root, {
+      summary: '混用整体重写',
+      files: [{
+        path: 'app.ts',
+        reason: '不允许混用',
+        action: 'update',
+        operations: [
+          {oldText: 'alpha', newText: 'gamma'},
+          {oldText: '', newText: 'whole file'}
+        ]
+      }]
+    })).rejects.toThrow(/non-empty oldText/i);
+  });
+
+  it('rejects operations that cancel each other out', async () => {
+    const root = await makeRoot();
+    await writeFile(join(root, 'app.ts'), 'value\n', 'utf8');
+
+    await expect(prepareEditProposal(root, {
+      summary: '互相抵消',
+      files: [{
+        path: 'app.ts',
+        reason: '净效果为零',
+        action: 'update',
+        operations: [
+          {oldText: 'value', newText: 'temporary'},
+          {oldText: 'temporary', newText: 'value'}
+        ]
+      }]
+    })).rejects.toThrow(/does not change content/i);
   });
 
   it('rejects proposals whose combined text exceeds the byte limit', async () => {

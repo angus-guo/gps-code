@@ -11,7 +11,8 @@ import {
 import {
   MAX_EDIT_FILES,
   MAX_EDIT_FILE_BYTES,
-  MAX_EDIT_OPERATIONS,
+  MAX_EDIT_OPERATIONS_PER_FILE,
+  MAX_EDIT_OPERATIONS_TOTAL,
   MAX_EDIT_TEXT_BYTES,
   type EditProposal,
   type EditProposalInput,
@@ -28,7 +29,7 @@ export const fileEditInputSchema = z.object({
   path: z.string().trim().min(1),
   reason: z.string().trim().min(1),
   action: z.enum(['create', 'update']),
-  operations: z.array(textEditOperationSchema).min(1).max(MAX_EDIT_OPERATIONS)
+  operations: z.array(textEditOperationSchema).min(1).max(MAX_EDIT_OPERATIONS_PER_FILE)
 });
 
 export const editProposalInputSchema = z.object({
@@ -67,8 +68,8 @@ function countTextBytes(input: EditProposalInput) {
 
 function assertProposalBounds(input: EditProposalInput) {
   const operationCount = input.files.reduce((total, file) => total + file.operations.length, 0);
-  if (operationCount > MAX_EDIT_OPERATIONS) {
-    throw new Error(`Edit proposal has too many operations (${operationCount} > ${MAX_EDIT_OPERATIONS}).`);
+  if (operationCount > MAX_EDIT_OPERATIONS_TOTAL) {
+    throw new Error(`Edit proposal has too many operations (${operationCount} > ${MAX_EDIT_OPERATIONS_TOTAL}).`);
   }
 
   const textBytes = countTextBytes(input);
@@ -77,16 +78,38 @@ function assertProposalBounds(input: EditProposalInput) {
   }
 }
 
+/**
+ * A single operation whose oldText is empty means "replace the whole file",
+ * as opposed to the default exact-unique-match form. It stays safe because the
+ * proposal still carries expectedHash, so a file changed between proposal and
+ * apply is still rejected as stale rather than clobbered.
+ */
+function isWholeFileRewrite(file: FileEditInput) {
+  return file.action === 'update'
+    && file.operations.length === 1
+    && file.operations[0].oldText === '';
+}
+
 function assertOperation(operation: TextEditOperation, file: FileEditInput) {
   if (operation.oldText === operation.newText) {
     throw new Error(`Edit operation does not change content: ${file.path}`);
   }
   if (file.action === 'update' && operation.oldText.length === 0) {
-    throw new Error(`Update operations require non-empty oldText: ${file.path}`);
+    throw new Error(
+      `Update operations require non-empty oldText unless the file has exactly one whole-file operation: ${file.path}`
+    );
   }
 }
 
 function applyOperations(content: string, file: FileEditInput) {
+  if (isWholeFileRewrite(file)) {
+    const proposedContent = file.operations[0].newText;
+    if (Buffer.byteLength(proposedContent, 'utf8') > MAX_EDIT_FILE_BYTES) {
+      throw new Error(`Proposed file is too large: ${file.path}.`);
+    }
+    return proposedContent;
+  }
+
   let proposedContent = content;
 
   for (const operation of file.operations) {
@@ -112,6 +135,12 @@ async function prepareExistingFile(root: string, file: FileEditInput) {
   const inspected = await inspectExistingTextFile(root, file.path);
   const originalContent = inspected.content;
   const proposedContent = applyOperations(originalContent, file);
+  // Catches both a whole-file rewrite that matches the current bytes (the
+  // per-operation check compares '' against newText, so it cannot see this)
+  // and exact-match operations that cancel each other out.
+  if (proposedContent === originalContent) {
+    throw new Error(`Edit operation does not change content: ${file.path}`);
+  }
 
   return {
     ...file,
