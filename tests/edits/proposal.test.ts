@@ -4,6 +4,7 @@ import {join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
 import {prepareEditProposal} from '../../src/edits/proposal.js';
 import {MAX_EDIT_FILES, MAX_EDIT_TEXT_BYTES} from '../../src/edits/types.js';
+import {canCreateSymlinks} from '../helpers/fs-capabilities.js';
 
 let tempDirs: string[] = [];
 
@@ -77,7 +78,7 @@ describe('prepareEditProposal', () => {
     })).rejects.toThrow(/outside workspace/i);
   });
 
-  it('rejects symbolic-link targets and symbolic-link parents', async () => {
+  it.skipIf(!canCreateSymlinks)('rejects symbolic-link targets and symbolic-link parents', async () => {
     const root = await makeRoot();
     const outside = await makeRoot();
     await mkdir(join(root, 'real-dir'));

@@ -28,7 +28,12 @@ function toPosixPath(path: string) {
 }
 
 function normalizeMatchPath(path: string) {
-  return path.startsWith('./') ? path.slice(2) : path;
+  // rg echoes the platform separator and prefixes matches with `./` (or `.\`
+  // on Windows) when the search path is the workspace root. Every other tool
+  // emits POSIX-style workspace-relative paths, and searchWithFallback below
+  // already does, so normalize here to keep the two search backends agreeing.
+  const posixPath = toPosixPath(path);
+  return posixPath.startsWith('./') ? posixPath.slice(2) : posixPath;
 }
 
 function isIgnoredRelativePath(path: string) {

@@ -5,6 +5,7 @@ import {afterEach, describe, expect, it} from 'vitest';
 import {applyEditProposal} from '../../src/edits/apply.js';
 import {prepareEditProposal} from '../../src/edits/proposal.js';
 import {createEditUndoer, undoEditProposal} from '../../src/edits/undo.js';
+import {canPersistFileModes} from '../helpers/fs-capabilities.js';
 
 let tempDirs: string[] = [];
 
@@ -47,7 +48,11 @@ describe('undoEditProposal', () => {
     const result = await undoEditProposal(root, proposal);
 
     expect(await readFile(scriptPath, 'utf8')).toContain('echo before');
-    expect((await stat(scriptPath)).mode & 0o777).toBe(0o755);
+    // Mode preservation is real behavior, but NTFS cannot represent it; the
+    // rest of this test (restore, create removal) is still meaningful.
+    if (canPersistFileModes) {
+      expect((await stat(scriptPath)).mode & 0o777).toBe(0o755);
+    }
     await expect(readFile(join(root, 'README.md'), 'utf8')).rejects.toMatchObject({code: 'ENOENT'});
     expect(result.files).toEqual([
       {path: 'script.sh', action: 'update'},

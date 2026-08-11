@@ -3,6 +3,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
 import {runCommand} from '../../src/commands/runner.js';
+import {canCreateSymlinks} from '../helpers/fs-capabilities.js';
 
 let tempDirs: string[] = [];
 
@@ -89,7 +90,7 @@ describe('runCommand', () => {
     })).rejects.toThrow(/outside workspace/i);
   });
 
-  it('rejects cwd symlinks that resolve outside the workspace', async () => {
+  it.skipIf(!canCreateSymlinks)('rejects cwd symlinks that resolve outside the workspace', async () => {
     const root = await makeRoot();
     const outside = await makeRoot();
     await symlink(outside, join(root, 'linked-outside'));

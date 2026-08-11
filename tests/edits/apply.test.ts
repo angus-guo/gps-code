@@ -4,6 +4,7 @@ import {join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
 import {applyEditProposal, createEditApplier} from '../../src/edits/apply.js';
 import {prepareEditProposal} from '../../src/edits/proposal.js';
+import {canPersistFileModes} from '../helpers/fs-capabilities.js';
 
 let tempDirs: string[] = [];
 
@@ -45,7 +46,11 @@ describe('applyEditProposal', () => {
     const result = await applyEditProposal(root, proposal);
 
     expect(await readFile(scriptPath, 'utf8')).toContain('echo after');
-    expect((await stat(scriptPath)).mode & 0o777).toBe(0o755);
+    // Mode preservation is real behavior, but NTFS cannot represent it; the
+    // rest of this test (atomic apply, create, rollback) is still meaningful.
+    if (canPersistFileModes) {
+      expect((await stat(scriptPath)).mode & 0o777).toBe(0o755);
+    }
     expect(await readFile(join(root, 'README.md'), 'utf8')).toBe('# Demo\n');
     expect(result.files).toEqual([
       expect.objectContaining({path: 'script.sh', action: 'update'}),

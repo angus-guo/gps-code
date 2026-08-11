@@ -3,6 +3,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
 import {loadConfig, saveConfig} from '../../src/config/store.js';
+import {canPersistFileModes} from '../helpers/fs-capabilities.js';
 
 let tempDirs: string[] = [];
 
@@ -48,7 +49,7 @@ describe('config store', () => {
     expect(JSON.parse(raw)).toMatchObject({model: 'deepseek-chat'});
   });
 
-  it('writes config without group or world permissions', async () => {
+  it.skipIf(!canPersistFileModes)('writes config without group or world permissions', async () => {
     const homeDir = await makeTempHome();
     const configDir = join(homeDir, '.gps-code');
     const configPath = join(configDir, 'config.json');
