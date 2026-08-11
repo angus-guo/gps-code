@@ -1,5 +1,6 @@
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {createOpenAICompatibleClient} from '../../src/model/openai-compatible.js';
+import {ModelRequestAbortedError} from '../../src/model/types.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -174,5 +175,80 @@ describe('OpenAI-compatible client', () => {
       content: '普通回答',
       toolCalls: []
     });
+  });
+
+  it('forwards the abort signal to fetch', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({choices: [{message: {role: 'assistant', content: 'ok'}}]})
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const controller = new AbortController();
+    const client = createOpenAICompatibleClient({
+      baseURL: 'https://api.example.com/v1',
+      apiKey: 'secret',
+      model: 'demo-model',
+      temperature: 0.2,
+      maxTokens: 1024
+    });
+
+    await client.complete({messages: [{role: 'user', content: '你好'}], signal: controller.signal});
+
+    expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal);
+  });
+
+  it('translates a fetch AbortError into ModelRequestAbortedError', async () => {
+    const abortError = Object.assign(new Error('The operation was aborted.'), {name: 'AbortError'});
+    const fetchMock = vi.fn().mockRejectedValue(abortError);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = createOpenAICompatibleClient({
+      baseURL: 'https://api.example.com/v1',
+      apiKey: 'secret',
+      model: 'demo-model',
+      temperature: 0.2,
+      maxTokens: 1024
+    });
+
+    await expect(client.complete({messages: [{role: 'user', content: '你好'}]}))
+      .rejects.toBeInstanceOf(ModelRequestAbortedError);
+  });
+
+  it('does not call fetch when the signal is already aborted', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const controller = new AbortController();
+    controller.abort();
+
+    const client = createOpenAICompatibleClient({
+      baseURL: 'https://api.example.com/v1',
+      apiKey: 'secret',
+      model: 'demo-model',
+      temperature: 0.2,
+      maxTokens: 1024
+    });
+
+    await expect(
+      client.complete({messages: [{role: 'user', content: '你好'}], signal: controller.signal})
+    ).rejects.toBeInstanceOf(ModelRequestAbortedError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('still surfaces non-abort network errors unchanged', async () => {
+    const networkError = new Error('socket hang up');
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(networkError));
+
+    const client = createOpenAICompatibleClient({
+      baseURL: 'https://api.example.com/v1',
+      apiKey: 'secret',
+      model: 'demo-model',
+      temperature: 0.2,
+      maxTokens: 1024
+    });
+
+    await expect(client.complete({messages: [{role: 'user', content: '你好'}]}))
+      .rejects.toThrow('socket hang up');
   });
 });

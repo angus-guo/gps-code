@@ -1,11 +1,21 @@
-import type {
-  ChatMessage,
-  ModelClient,
-  ModelClientConfig,
-  ModelRequest,
-  ModelResponse,
-  ToolCall
+import {
+  ModelRequestAbortedError,
+  type ChatMessage,
+  type ModelClient,
+  type ModelClientConfig,
+  type ModelRequest,
+  type ModelResponse,
+  type ToolCall
 } from './types.js';
+
+function isAbortError(error: unknown): boolean {
+  return Boolean(
+    error &&
+    typeof error === 'object' &&
+    'name' in error &&
+    (error as {name?: string}).name === 'AbortError'
+  );
+}
 
 type OpenAIMessage =
   | {
@@ -123,20 +133,34 @@ function parseToolCalls(response: ChatCompletionResponse): ToolCall[] {
 
 export function createOpenAICompatibleClient(config: ModelClientConfig): ModelClient {
   async function complete(request: ModelRequest): Promise<ModelResponse> {
-    const response = await fetch(joinURL(config.baseURL, '/chat/completions'), {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${config.apiKey}`,
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: config.model,
-        messages: request.messages.map(toOpenAIMessage),
-        ...(request.tools?.length ? {tools: request.tools} : {}),
-        temperature: config.temperature,
-        max_tokens: config.maxTokens
-      })
-    });
+    // Reject early if the caller already cancelled before the request started.
+    if (request.signal?.aborted) {
+      throw new ModelRequestAbortedError();
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(joinURL(config.baseURL, '/chat/completions'), {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${config.apiKey}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: config.model,
+          messages: request.messages.map(toOpenAIMessage),
+          ...(request.tools?.length ? {tools: request.tools} : {}),
+          temperature: config.temperature,
+          max_tokens: config.maxTokens
+        }),
+        signal: request.signal
+      });
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw new ModelRequestAbortedError();
+      }
+      throw error;
+    }
 
     const data = (await response.json()) as ChatCompletionResponse;
 

@@ -41,7 +41,16 @@ export type ModelToolDefinition = {
 export type ModelRequest = {
   messages: ChatMessage[];
   tools?: ModelToolDefinition[];
+  signal?: AbortSignal;
 };
+
+/** Thrown when a model request is aborted through its AbortSignal. */
+export class ModelRequestAbortedError extends Error {
+  constructor(message = 'Model request was cancelled.') {
+    super(message);
+    this.name = 'ModelRequestAbortedError';
+  }
+}
 
 export type ModelResponse = {
   content: string;

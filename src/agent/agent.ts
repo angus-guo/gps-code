@@ -1,6 +1,6 @@
 import {seniorEngineerSystemPrompt} from './prompts.js';
 import type {CommandResult} from '../commands/types.js';
-import type {ChatMessage, ModelClient, ToolCall} from '../model/types.js';
+import {ModelRequestAbortedError, type ChatMessage, type ModelClient, type ToolCall} from '../model/types.js';
 import {getProposedCommand} from '../tools/propose-command.js';
 import {getProposedFileEdits} from '../tools/propose-file-edits.js';
 import {executeToolCall, getToolDefinitionsForModel} from '../tools/registry.js';
@@ -40,22 +40,18 @@ function formatRepoMap(repoMap: RepoMap) {
   );
 }
 
-function createInitialMessages(repoMap: RepoMap, input: string): ChatMessage[] {
-  return [
-    {role: 'system', content: seniorEngineerSystemPrompt},
-    {
-      role: 'system',
-      content: [
-        '当前项目 repo map 如下。你可以使用工具读取更多项目证据。',
-        '如果你想建议用户运行命令，必须使用 propose_command 工具提出命令；命令不会自动执行，最终回答必须说明需要用户确认后才会运行。',
-        '如果用户要求修改代码，先使用只读工具检查准确内容，再使用 propose_file_edits 提出精确编辑；该工具不会写入文件，最终回答必须说明需要用户查看 Diff 并确认后才会应用。',
-        '回答时必须说明依据；如果证据不足，说明还需要检查什么。',
-        '',
-        formatRepoMap(repoMap)
-      ].join('\n')
-    },
-    {role: 'user', content: input}
-  ];
+function createRepoMapMessage(repoMap: RepoMap): ChatMessage {
+  return {
+    role: 'system',
+    content: [
+      '当前项目 repo map 如下。你可以使用工具读取更多项目证据。',
+      '如果你想建议用户运行命令，必须使用 propose_command 工具提出命令；命令不会自动执行，最终回答必须说明需要用户确认后才会运行。',
+      '如果用户要求修改代码，先使用只读工具检查准确内容，再使用 propose_file_edits 提出精确编辑；该工具不会写入文件，最终回答必须说明需要用户查看 Diff 并确认后才会应用。',
+      '回答时必须说明依据；如果证据不足，说明还需要检查什么。',
+      '',
+      formatRepoMap(repoMap)
+    ].join('\n')
+  };
 }
 
 function createCommandResultSummaryMessages(repoMap: RepoMap, result: CommandResult): ChatMessage[] {
@@ -139,11 +135,12 @@ export class AgentSession implements Agent {
     this.messages.push({role: 'system', content: seniorEngineerSystemPrompt});
   }
 
+  /**
+   * Aborts an in-flight ask(). Safe to call when idle. The controller is left
+   * in place so the running ask() sees the abort; ask()'s finally clears it.
+   */
   cancel(): void {
-    if (this.abortController) {
-      this.abortController.abort();
-      this.abortController = null;
-    }
+    this.abortController?.abort();
   }
 
   private async runTool(toolCall: ToolCall): Promise<{
@@ -209,34 +206,37 @@ export class AgentSession implements Agent {
   }
 
   async ask(input: string): Promise<string> {
+    // Captured so a cancelled turn can be rolled back. Leaving a dangling user
+    // message, or an assistant tool_calls message without its tool results,
+    // makes every later request invalid for OpenAI-compatible providers.
+    const messagesBeforeTurn = this.messages.length;
+    const repoMapSentBeforeTurn = this.repoMapSent;
+
     // Send repo map only on first turn
     if (!this.repoMapSent) {
-      this.messages.push({
-        role: 'system',
-        content: [
-          '当前项目 repo map 如下。你可以使用工具读取更多项目证据。',
-          '如果你想建议用户运行命令，必须使用 propose_command 工具提出命令；命令不会自动执行，最终回答必须说明需要用户确认后才会运行。',
-          '如果用户要求修改代码，先使用只读工具检查准确内容，再使用 propose_file_edits 提出精确编辑；该工具不会写入文件，最终回答必须说明需要用户查看 Diff 并确认后才会应用。',
-          '回答时必须说明依据；如果证据不足，说明还需要检查什么。',
-          '',
-          formatRepoMap(this.options.repoMap)
-        ].join('\n')
-      });
+      this.messages.push(createRepoMapMessage(this.options.repoMap));
       this.repoMapSent = true;
     }
 
     this.messages.push({role: 'user', content: input});
 
-    this.abortController = new AbortController();
+    const controller = new AbortController();
+    this.abortController = controller;
+    const {signal} = controller;
     let toolRounds = 0;
     let proposedCommandSeen = false;
     let proposedEditSeen = false;
 
     try {
       while (true) {
+        if (signal.aborted) {
+          throw new ModelRequestAbortedError();
+        }
+
         const response = await this.options.model.complete({
           messages: this.messages,
-          tools: this.tools
+          tools: this.tools,
+          signal
         });
 
         if (response.toolCalls.length === 0) {
@@ -272,9 +272,24 @@ export class AgentSession implements Agent {
           this.messages.push(result.message);
         }
         toolRounds += 1;
+
+        // Check for cancellation after each batch of tools, before the next model call.
+        if (signal.aborted) {
+          throw new ModelRequestAbortedError();
+        }
       }
+    } catch (error) {
+      if (error instanceof ModelRequestAbortedError) {
+        this.messages.length = messagesBeforeTurn;
+        this.repoMapSent = repoMapSentBeforeTurn;
+      }
+      throw error;
     } finally {
-      this.abortController = null;
+      // Only clear if this ask() owns the current controller; a later ask()
+      // may have already replaced it.
+      if (this.abortController === controller) {
+        this.abortController = null;
+      }
     }
   }
 

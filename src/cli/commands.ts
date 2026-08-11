@@ -55,7 +55,10 @@ export function createProgram() {
     });
 
   program.action(() => {
-    render(React.createElement(App, {cwd: process.cwd()}));
+    // Ink exits the process on Ctrl-C by default, which would kill the app
+    // instead of cancelling an in-flight request. App.tsx handles Ctrl-C
+    // itself: cancel while busy, exit while idle.
+    render(React.createElement(App, {cwd: process.cwd()}), {exitOnCtrlC: false});
   });
 
   return program;

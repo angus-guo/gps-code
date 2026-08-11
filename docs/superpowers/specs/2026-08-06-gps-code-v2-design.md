@@ -71,6 +71,10 @@ differs, and the numbering has been amended rather than silently corrected:
   `AbortController` exist, but no `AbortSignal` reaches `fetch` and no key
   handler calls `cancel()`. It was listed in M6 scope and did not ship. Note
   that `InputBox` already owns Ink's `useInput`, so Ctrl-C wiring needs care.
+  **Resolved 2026-08-07 in M7.5** — see
+  `plans/2026-08-07-gps-code-m7.5-cancellation.md`. Numbered 7.5 because it
+  closes M6 debt rather than opening a milestone, so the shift below is still
+  one, not two.
 
 Treat the milestone *contents* below as still valid and the *numbers* as
 off-by-one past M6.

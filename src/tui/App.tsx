@@ -1,5 +1,5 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
-import {Box, Text} from 'ink';
+import {Box, Text, useApp, useInput} from 'ink';
 import {AgentSession} from '../agent/agent.js';
 import type {Agent} from '../agent/agent.js';
 import {runCommand} from '../commands/runner.js';
@@ -10,6 +10,7 @@ import type {ProposedFileEdits} from '../edits/types.js';
 import {undoEditProposal} from '../edits/undo.js';
 import {prepareWorkspaceDiff} from '../git/diff.js';
 import {createOpenAICompatibleClient} from '../model/openai-compatible.js';
+import {ModelRequestAbortedError} from '../model/types.js';
 import {decideCommandProposal, decideEditProposal} from '../permissions/decide.js';
 import {
   PERMISSION_MODES,
@@ -49,6 +50,7 @@ import {
   formatValidationSuggestion,
   suggestValidationCommand
 } from './edit-verification.js';
+import {formatAgentCancelled, getInterruptAction} from './interrupt.js';
 import {InputBox} from './components/InputBox.js';
 
 function formatToolActivity(activity: ToolActivity) {
@@ -68,6 +70,7 @@ function appendMessage(message: ChatMessageView) {
 }
 
 export function App({cwd}: {cwd: string}) {
+  const {exit} = useApp();
   const [messages, setMessages] = useState<ChatMessageView[]>([
     {role: 'system', content: '欢迎使用 GPS Code。正在分析当前项目...'}
   ]);
@@ -77,6 +80,10 @@ export function App({cwd}: {cwd: string}) {
   const [pendingUndo, setPendingUndo] = useState<ProposedFileEdits | null>(null);
   const [lastAppliedEdit, setLastAppliedEdit] = useState<ProposedFileEdits | null>(null);
   const [busy, setBusy] = useState(true);
+  // Distinct from `busy`, which is also true while a command runs or an edit
+  // applies. Ctrl-C can only cancel the agent, so it must not claim to have
+  // cancelled anything during those other operations.
+  const [agentBusy, setAgentBusy] = useState(false);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default-confirm');
   const agentRef = useRef<Agent | null>(null);
   // onToolActivity is registered once at boot, so it must read the mode through
@@ -87,6 +94,32 @@ export function App({cwd}: {cwd: string}) {
     permissionModeRef.current = mode;
     setPermissionMode(mode);
   }
+
+  // Ctrl-C cancels an in-flight agent turn rather than killing the app; when
+  // there is nothing to cancel it exits, keeping the usual terminal
+  // expectation. Ink's own exitOnCtrlC is disabled in cli/commands.ts so this
+  // is the only handler. InputBox also calls useInput, but Ink broadcasts keys
+  // to every handler and InputBox ignores Ctrl-C, so the two do not conflict.
+  useInput((input, key) => {
+    const action = getInterruptAction(input, key, {
+      agentBusy,
+      hasAgent: Boolean(agentRef.current)
+    });
+
+    if (action === 'cancel-agent') {
+      agentRef.current?.cancel();
+      setMessages(appendMessage({
+        role: 'system',
+        kind: 'tool',
+        content: formatAgentCancelled()
+      }));
+      return;
+    }
+
+    if (action === 'exit') {
+      exit();
+    }
+  });
 
   useEffect(() => {
     async function boot() {
@@ -557,6 +590,7 @@ export function App({cwd}: {cwd: string}) {
     }
 
     setBusy(true);
+    setAgentBusy(true);
     setMessages((current) => [...current, {role: 'user', content: input}]);
     try {
       if (!agentRef.current) {
@@ -572,11 +606,17 @@ export function App({cwd}: {cwd: string}) {
       const answer = await agentRef.current.ask(input);
       setMessages((current) => [...current, {role: 'assistant', content: answer}]);
     } catch (error) {
+      // A cancellation already reported itself when Ctrl-C was pressed, so it
+      // should not also surface as a request failure.
+      if (error instanceof ModelRequestAbortedError) {
+        return;
+      }
       setMessages((current) => [
         ...current,
         {role: 'assistant', content: `请求失败：${error instanceof Error ? error.message : String(error)}`}
       ]);
     } finally {
+      setAgentBusy(false);
       setBusy(false);
     }
   }

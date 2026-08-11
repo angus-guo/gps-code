@@ -66,6 +66,9 @@ GPS Code 是面向个人开发者的中文优先 AI coding agent，尤其适合�
 - **取消功能仍未完成。** `AgentSession.cancel()` 和 `AbortController` 存在，但没有
   `AbortSignal` 传到 `fetch`，也没有按键处理去调 `cancel()`。它列在 M6 范围内但没有交付。
   注意 `InputBox` 已经占用了 Ink 的 `useInput`，接 Ctrl-C 需要小心。
+  **已于 2026-08-07 在 M7.5 中完成** —— 见
+  `plans/2026-08-07-gps-code-m7.5-cancellation.md`。编号为 7.5 是因为它偿还的是 M6 的
+  欠账而不是开启新里程碑，所以下面的编号仍然只顺延一位，不是两位。
 
 下面各里程碑的*内容*仍然有效，但 M6 之后的*编号*要顺延一位来读。
 
