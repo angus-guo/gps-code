@@ -2,6 +2,7 @@ import type {CommandRequest} from '../commands/types.js';
 import {classifyCommand} from './policy.js';
 import {
   PERMISSION_MODE_LABELS,
+  type CommandPolicyOptions,
   type CommandProposalDecision,
   type EditProposalDecision,
   type PermissionMode
@@ -14,9 +15,10 @@ import {
  */
 export function decideCommandProposal(
   command: CommandRequest,
-  mode: PermissionMode
+  mode: PermissionMode,
+  options: CommandPolicyOptions = {}
 ): CommandProposalDecision {
-  const policy = classifyCommand(command);
+  const policy = classifyCommand(command, options);
   if (policy.classification === 'block') {
     return {action: 'reject', reason: policy.reason};
   }
@@ -26,6 +28,10 @@ export function decideCommandProposal(
       action: 'reject',
       reason: `当前是${PERMISSION_MODE_LABELS[mode]}，不会执行命令。切换模式：/mode default-confirm`
     };
+  }
+
+  if (policy.classification === 'strong-confirm') {
+    return {action: 'strong-confirm', reason: policy.reason};
   }
 
   return {action: 'confirm', reason: policy.reason};

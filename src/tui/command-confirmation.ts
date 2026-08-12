@@ -107,6 +107,38 @@ export function formatPendingCommand(command: CommandRequest) {
   ].join('\n');
 }
 
+/**
+ * Higher-friction confirmation for risky-but-legitimate commands. `y` is
+ * deliberately rejected: the whole point is to break the habit of confirming
+ * without reading, so the user has to retype the command itself.
+ */
+export function getStrongConfirmationDecision(
+  input: string,
+  command: CommandRequest
+): ConfirmationDecision {
+  const normalized = input.trim();
+  if (rejectInputs.has(normalized.toLowerCase())) {
+    return 'reject';
+  }
+  if (normalized === formatCommandLine(command.command, command.args ?? [])) {
+    return 'confirm';
+  }
+  return 'unknown';
+}
+
+export function formatPendingStrongCommand(command: CommandRequest, reason?: string) {
+  const commandLine = formatCommandLine(command.command, command.args ?? []);
+  return [
+    '这条命令风险较高，需要二次确认：',
+    `$ ${commandLine}`,
+    `工作目录：${command.cwd || '.'}`,
+    ...(reason ? [`原因：${reason}`] : []),
+    '',
+    `请完整输入以下命令以确认执行（回复 y 无效）：\n${commandLine}`,
+    '或回复 n/no/取消/cancel 取消。'
+  ].join('\n');
+}
+
 export function formatCommandStarted(command: CommandRequest) {
   return `开始执行命令：$ ${formatCommandLine(command.command, command.args ?? [])}`;
 }

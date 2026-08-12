@@ -4,7 +4,9 @@ import {
   formatCommandResult,
   formatCommandResultWithSummary,
   formatPendingCommand,
+  formatPendingStrongCommand,
   getConfirmationDecision,
+  getStrongConfirmationDecision,
   parseManualCommandProposal,
   splitCommandLine
 } from '../../src/tui/command-confirmation.js';
@@ -21,6 +23,33 @@ describe('command confirmation helpers', () => {
     expect(getConfirmationDecision('取消')).toBe('reject');
     expect(getConfirmationDecision('cancel')).toBe('reject');
     expect(getConfirmationDecision('maybe')).toBe('unknown');
+  });
+
+  it('requires retyping the command for strong confirmation', () => {
+    const command = {command: 'npm', args: ['install', '-g', 'typescript']};
+
+    // Habitual confirmations are deliberately rejected.
+    expect(getStrongConfirmationDecision('y', command)).toBe('unknown');
+    expect(getStrongConfirmationDecision('yes', command)).toBe('unknown');
+    expect(getStrongConfirmationDecision('确认', command)).toBe('unknown');
+
+    // Retyping the exact command line confirms; rejection words still cancel.
+    expect(getStrongConfirmationDecision('npm install -g typescript', command)).toBe('confirm');
+    expect(getStrongConfirmationDecision(' npm install -g typescript ', command)).toBe('confirm');
+    expect(getStrongConfirmationDecision('npm install -g eslint', command)).toBe('unknown');
+    expect(getStrongConfirmationDecision('n', command)).toBe('reject');
+    expect(getStrongConfirmationDecision('取消', command)).toBe('reject');
+  });
+
+  it('formats strong confirmation prompts with the reason and the command to retype', () => {
+    const command = {command: 'npm', args: ['install', '-g', 'typescript']};
+    const prompt = formatPendingStrongCommand(command, '全局安装会修改系统状态。');
+
+    expect(prompt).toContain('二次确认');
+    expect(prompt).toContain('$ npm install -g typescript');
+    expect(prompt).toContain('原因：全局安装会修改系统状态。');
+    expect(prompt).toContain('回复 y 无效');
+    expect(prompt).toContain('npm install -g typescript');
   });
 
   it('splits command lines without invoking a shell', () => {

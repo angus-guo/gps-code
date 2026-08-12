@@ -14,7 +14,12 @@ export const modelConfigSchema = z.object({
   apiKey: z.string().min(1),
   model: z.string().min(1),
   temperature: z.number().min(0).max(2).default(0.2),
-  maxTokens: z.number().int().positive().default(4096)
+  maxTokens: z.number().int().positive().default(4096),
+  // Command lines that skip confirmation, e.g. ["pnpm test", "git status *"].
+  // Cannot override a built-in block; see permissions/policy.ts.
+  allowlist: z.array(z.string()).optional(),
+  // Command lines that are always refused, checked before anything else.
+  denylist: z.array(z.string()).optional()
 });
 
 export type ModelConfig = z.infer<typeof modelConfigSchema>;

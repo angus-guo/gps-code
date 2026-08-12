@@ -12,6 +12,7 @@ import {prepareWorkspaceDiff} from '../git/diff.js';
 import {createOpenAICompatibleClient} from '../model/openai-compatible.js';
 import {ModelRequestAbortedError} from '../model/types.js';
 import {decideCommandProposal, decideEditProposal} from '../permissions/decide.js';
+import type {CommandPolicyOptions} from '../permissions/types.js';
 import {
   PERMISSION_MODES,
   PERMISSION_MODE_DESCRIPTIONS,
@@ -27,7 +28,9 @@ import {
   formatCommandResultWithSummary,
   formatCommandStarted,
   formatPendingCommand,
+  formatPendingStrongCommand,
   getConfirmationDecision,
+  getStrongConfirmationDecision,
   parseManualCommandProposal
 } from './command-confirmation.js';
 import {ChatView, type ChatMessageView} from './components/ChatView.js';
@@ -75,7 +78,12 @@ export function App({cwd}: {cwd: string}) {
     {role: 'system', content: '欢迎使用 GPS Code。正在分析当前项目...'}
   ]);
   const [repoMap, setRepoMap] = useState<RepoMap | null>(null);
-  const [pendingCommand, setPendingCommand] = useState<CommandRequest | null>(null);
+  // The decision travels with the command so the confirmation check can never
+  // disagree with the classification that produced the prompt.
+  const [pendingCommand, setPendingCommand] = useState<{
+    command: CommandRequest;
+    strong: boolean;
+  } | null>(null);
   const [pendingEdit, setPendingEdit] = useState<ProposedFileEdits | null>(null);
   const [pendingUndo, setPendingUndo] = useState<ProposedFileEdits | null>(null);
   const [lastAppliedEdit, setLastAppliedEdit] = useState<ProposedFileEdits | null>(null);
@@ -89,6 +97,10 @@ export function App({cwd}: {cwd: string}) {
   // onToolActivity is registered once at boot, so it must read the mode through
   // a ref rather than closing over the state value from that first render.
   const permissionModeRef = useRef<PermissionMode>('default-confirm');
+  // Read from config at boot. A ref for the same reason as the mode: the
+  // onToolActivity callback is registered once and would otherwise capture the
+  // value from that first render.
+  const policyOptionsRef = useRef<CommandPolicyOptions>({});
 
   function changePermissionMode(mode: PermissionMode) {
     permissionModeRef.current = mode;
@@ -129,13 +141,21 @@ export function App({cwd}: {cwd: string}) {
 
         const config = await loadConfig();
         if (config) {
+          policyOptionsRef.current = {
+            allowlist: config.allowlist,
+            denylist: config.denylist
+          };
           agentRef.current = new AgentSession({
             model: createOpenAICompatibleClient(config),
             repoMap: map,
             onToolActivity(activity) {
               if (activity.status === 'proposed' && activity.command) {
                 const {command} = activity;
-                const decision = decideCommandProposal(command, permissionModeRef.current);
+                const decision = decideCommandProposal(
+                  command,
+                  permissionModeRef.current,
+                  policyOptionsRef.current
+                );
 
                 if (decision.action === 'reject') {
                   setMessages((current) => [
@@ -149,13 +169,16 @@ export function App({cwd}: {cwd: string}) {
                   return;
                 }
 
-                setPendingCommand(command);
+                const strong = decision.action === 'strong-confirm';
+                setPendingCommand({command, strong});
                 setMessages((current) => [
                   ...current,
                   {
                     role: 'system',
                     kind: 'command',
-                    content: `${formatToolActivity(activity)}\n\n${formatPendingCommand(command)}`
+                    content: `${formatToolActivity(activity)}\n\n${strong
+                      ? formatPendingStrongCommand(command, decision.reason)
+                      : formatPendingCommand(command)}`
                   }
                 ]);
                 return;
@@ -279,9 +302,16 @@ export function App({cwd}: {cwd: string}) {
     }
   }
 
-  async function handleCommandConfirmation(input: string, command: CommandRequest, map: RepoMap) {
+  async function handleCommandConfirmation(
+    input: string,
+    pending: {command: CommandRequest; strong: boolean},
+    map: RepoMap
+  ) {
+    const {command, strong} = pending;
     setMessages(appendMessage({role: 'user', content: input}));
-    const decision = getConfirmationDecision(input);
+    const decision = strong
+      ? getStrongConfirmationDecision(input, command)
+      : getConfirmationDecision(input);
 
     if (decision === 'reject') {
       setPendingCommand(null);
@@ -302,7 +332,9 @@ export function App({cwd}: {cwd: string}) {
     setMessages(appendMessage({
       role: 'system',
       kind: 'command',
-      content: formatPendingCommand(command)
+      content: strong
+        ? formatPendingStrongCommand(command)
+        : formatPendingCommand(command)
     }));
   }
 
@@ -337,14 +369,27 @@ export function App({cwd}: {cwd: string}) {
           content: `工作区变更检查失败：${error instanceof Error ? error.message : String(error)}`
         }));
       }
+      // The suggestion is generated locally rather than by the model, but it
+      // still goes through policy so there is exactly one path to a pending
+      // command and no route that skips the denylist.
       const suggestion = suggestValidationCommand(map);
       if (suggestion) {
-        setPendingCommand(suggestion.command);
-        setMessages(appendMessage({
-          role: 'system',
-          kind: 'command',
-          content: `${formatValidationSuggestion(suggestion)}\n\n${formatPendingCommand(suggestion.command)}`
-        }));
+        const decision = decideCommandProposal(
+          suggestion.command,
+          permissionModeRef.current,
+          policyOptionsRef.current
+        );
+        if (decision.action !== 'reject') {
+          const strong = decision.action === 'strong-confirm';
+          setPendingCommand({command: suggestion.command, strong});
+          setMessages(appendMessage({
+            role: 'system',
+            kind: 'command',
+            content: `${formatValidationSuggestion(suggestion)}\n\n${strong
+              ? formatPendingStrongCommand(suggestion.command, decision.reason)
+              : formatPendingCommand(suggestion.command)}`
+          }));
+        }
       }
     } catch (error) {
       setMessages(appendMessage({
@@ -558,7 +603,7 @@ export function App({cwd}: {cwd: string}) {
       const command = parseManualCommandProposal(input);
       if (command) {
         // The manual /run path goes through the same policy as model proposals.
-        const decision = decideCommandProposal(command, permissionMode);
+        const decision = decideCommandProposal(command, permissionMode, policyOptionsRef.current);
         if (decision.action === 'reject') {
           setMessages((current) => [
             ...current,
@@ -572,11 +617,18 @@ export function App({cwd}: {cwd: string}) {
           return;
         }
 
-        setPendingCommand(command);
+        const strong = decision.action === 'strong-confirm';
+        setPendingCommand({command, strong});
         setMessages((current) => [
           ...current,
           {role: 'user', content: input},
-          {role: 'system', kind: 'command', content: formatPendingCommand(command)}
+          {
+            role: 'system',
+            kind: 'command',
+            content: strong
+              ? formatPendingStrongCommand(command, decision.reason)
+              : formatPendingCommand(command)
+          }
         ]);
         return;
       }
@@ -634,7 +686,7 @@ export function App({cwd}: {cwd: string}) {
       <InputBox
         disabled={!canChat || busy}
         prompt={pendingCommand
-          ? '确认执行？'
+          ? (pendingCommand.strong ? '请输入完整命令确认：' : '确认执行？')
           : pendingEdit
             ? '确认应用？'
             : pendingUndo

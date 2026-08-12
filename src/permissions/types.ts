@@ -1,4 +1,15 @@
-export type CommandClassification = 'allow' | 'confirm' | 'block';
+/**
+ * `strong-confirm` requires the user to retype the command rather than answer
+ * `y`, for operations that are legitimate but expensive to undo.
+ */
+export type CommandClassification = 'allow' | 'confirm' | 'strong-confirm' | 'block';
+
+export type CommandPolicyOptions = {
+  /** Exact command lines, or `prefix *`, that downgrade a confirm to allow. */
+  allowlist?: string[];
+  /** Exact command lines, or `prefix *`, that are always refused. */
+  denylist?: string[];
+};
 
 export type PermissionMode = 'default-confirm' | 'auto-accept-edits' | 'read-only' | 'plan';
 
@@ -33,7 +44,7 @@ export type CommandPolicyResult = {
 };
 
 export type CommandProposalDecision = {
-  action: 'confirm' | 'reject';
+  action: 'confirm' | 'strong-confirm' | 'reject';
   reason?: string;
 };
 
