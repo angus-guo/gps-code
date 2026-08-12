@@ -62,11 +62,14 @@ When a proposal has been seen, `agent.ts` appends a notice to the final answer s
 
 `proposal.ts` (prepare, read-only) → `preview.ts` (bounded unified diff) → `apply.ts` (write) → `undo.ts` (one level).
 
-- Update operations require `oldText` to match **exactly once** in the file.
-- Every prepared edit carries `expectedHash` (sha256 of current bytes) and `proposedHash`. `apply.ts` re-checks the hash immediately before committing, so a file edited between proposal and confirmation produces a stale-proposal error instead of a clobber.
-- Writes go through a temp file (`.gps-code-<name>-<uuid>.tmp`) in the target directory, `fsync`ed, then `rename` (update) or `link` + `unlink` (create, so an existing file is never silently overwritten). Original file mode is preserved.
-- Multi-file applies roll back already-committed files in reverse on failure; rollback errors are appended to the thrown message rather than swallowed. Undo backups are deliberately preserved when rollback fails.
-- Bounds live in `edits/types.ts` (`MAX_EDIT_FILES` 5, `MAX_EDIT_OPERATIONS` 20, size caps). Out of scope by design: delete, rename, binary files, symlinks, permission changes.
+- Four actions: `create`, `update`, `delete`, `rename`. Which fields each one requires is enforced by `assertActionShape()` in code, **not** by a zod discriminated union — the model-facing JSON Schema stays one flat object because weaker OpenAI-compatible models handle `oneOf` poorly, and the error names the actual problem. `delete`/`rename` take no operations; `rename` requires `newPath` and is rejected for every other action.
+- Update operations require `oldText` to match **exactly once** in the file. The one exception is a whole-file rewrite: a single operation with an empty `oldText` replaces the entire file. It must be that file's only operation (mixing it with exact-match operations is rejected).
+- `rename` moves bytes without changing them, so `expectedHash === proposedHash`. Changing content while renaming takes two proposals — the target path doesn't exist yet when the first one is prepared.
+- Every prepared edit carries `expectedHash` (sha256 of current bytes) and `proposedHash`. `apply.ts` re-checks the hash immediately before committing, so a file edited between proposal and confirmation produces a stale-proposal error instead of a clobber. This covers the whole-file rewrite and `delete` paths too.
+- Writes go through a temp file (`.gps-code-<name>-<uuid>.tmp`) in the target directory, `fsync`ed, then `rename` (update) or `link` + `unlink` (create, so an existing file is never silently overwritten). `delete` and `rename` have no temp file; they act in place at commit. Original file mode is preserved.
+- Undoing a `delete` recreates the file from the proposal's in-memory `originalContent`, the same way an update restores — no `.deleted` backup is left in the workspace. This is why `PreparedFileEdit` carries `originalMode`: once the file is gone the mode can't be read back from disk.
+- Multi-file applies roll back already-committed files in reverse on failure; rollback errors are appended to the thrown message rather than swallowed. Undo backups are deliberately preserved when rollback fails. A rollback refuses (rather than clobbers) when the file changed underneath it — including a renamed file modified at its new path.
+- Bounds live in `edits/types.ts`: `MAX_EDIT_FILES` 20, `MAX_EDIT_OPERATIONS_PER_FILE` 50, `MAX_EDIT_OPERATIONS_TOTAL` 200, plus size caps. The per-file and total operation caps are separate on purpose — one number for both would leave ~2.5 operations per file at 20 files. Still out of scope by design: binary files, symlinks, permission changes.
 
 ### Path and command safety
 
@@ -77,7 +80,7 @@ When a proposal has been seen, `agent.ts` appends a notice to the final answer s
 ## Conventions
 
 - ESM with `"type": "module"` and `moduleResolution: "Bundler"`, but **every relative import still uses an explicit `.js` extension** (e.g. `import {x} from './types.js'`) even from `.ts`/`.tsx` sources. Match this.
-- zod schemas define tool inputs and are the single validation point; `tools/registry.ts` keeps a parallel hand-written JSON Schema per tool in `toolParameterSchemas` for the model wire format. **Adding or changing a tool input means updating both.** Register new tools in `builtinTools`.
+- zod schemas define tool inputs and are the single validation point; `tools/registry.ts` keeps a parallel hand-written JSON Schema per tool in `toolParameterSchemas` for the model wire format. **Adding or changing a tool input means updating both.** Register new tools in `builtinTools`. `tests/tools/registry.test.ts` imports the bound constants (`MAX_EDIT_FILES`, `MAX_EDIT_OPERATIONS_PER_FILE`) rather than hardcoding numbers, so changing one side without the other fails the test instead of silently drifting.
 - Language split: all user-facing strings (TUI text, prompts in `agent/prompts.ts`, confirmation words) are Simplified Chinese; identifiers, code comments, and thrown `Error` messages are English.
 - Confirmation vocabulary is centralized: commands accept `y/yes/确认/执行/run`, edits accept `y/yes/确认/应用/apply`, undo also accepts `撤销/undo`, all reject with `n/no/取消/cancel`.
 - Slash commands handled in `App.tsx`: `/run <cmd>`, `/undo`, and `/mode [mode-name]`.

@@ -77,14 +77,18 @@ const toolParameterSchemas: Record<string, ModelToolDefinition['function']['para
         items: {
           type: 'object',
           properties: {
-            path: {type: 'string', description: 'Workspace-relative text file path.'},
+            path: {type: 'string', description: 'Workspace-relative text file path (source path for rename).'},
             reason: {type: 'string', description: 'Why this file needs to change.'},
-            action: {type: 'string', enum: ['create', 'update']},
+            action: {
+              type: 'string',
+              enum: ['create', 'update', 'delete', 'rename'],
+              description: 'create: new file. update: exact-match text replacement or whole-file rewrite. delete: remove existing file. rename: move without changing content (propose a content change separately).'
+            },
             operations: {
               type: 'array',
-              minItems: 1,
+              minItems: 0,
               maxItems: 50,
-              description: 'Exact text replacements applied in order.',
+              description: 'Exact text replacements applied in order. Omit or leave empty for delete and rename.',
               items: {
                 type: 'object',
                 properties: {
@@ -97,9 +101,13 @@ const toolParameterSchemas: Record<string, ModelToolDefinition['function']['para
                 required: ['oldText', 'newText'],
                 additionalProperties: false
               }
+            },
+            newPath: {
+              type: 'string',
+              description: 'Required for rename: the new workspace-relative path. Rejected for every other action.'
             }
           },
-          required: ['path', 'reason', 'action', 'operations'],
+          required: ['path', 'reason', 'action'],
           additionalProperties: false
         }
       }

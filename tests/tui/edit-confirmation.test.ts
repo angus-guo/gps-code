@@ -23,7 +23,8 @@ const proposed: ProposedFileEdits = {
       expectedHash: 'a'.repeat(64),
       proposedHash: 'b'.repeat(64),
       originalContent: 'const answer = 41;\n',
-      proposedContent: 'const answer = 42;\n'
+      proposedContent: 'const answer = 42;\n',
+      originalMode: 0o644
     }]
   },
   preview: {

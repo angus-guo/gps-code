@@ -28,8 +28,12 @@ export const textEditOperationSchema = z.object({
 export const fileEditInputSchema = z.object({
   path: z.string().trim().min(1),
   reason: z.string().trim().min(1),
-  action: z.enum(['create', 'update']),
-  operations: z.array(textEditOperationSchema).min(1).max(MAX_EDIT_OPERATIONS_PER_FILE)
+  action: z.enum(['create', 'update', 'delete', 'rename']),
+  // Optional because delete and rename change no content. Which actions
+  // require operations is enforced in assertActionShape, so the failure is a
+  // sentence the model can act on rather than a zod union mismatch.
+  operations: z.array(textEditOperationSchema).max(MAX_EDIT_OPERATIONS_PER_FILE).default([]),
+  newPath: z.string().trim().min(1).optional()
 });
 
 export const editProposalInputSchema = z.object({
@@ -37,13 +41,18 @@ export const editProposalInputSchema = z.object({
   files: z.array(fileEditInputSchema).min(1).max(MAX_EDIT_FILES)
 });
 
+/** Post-parse shape: zod's .default([]) guarantees operations is present. */
+type ParsedFileEdit = z.output<typeof fileEditInputSchema>;
+type ParsedProposal = z.output<typeof editProposalInputSchema>;
+
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 
 export const preparedFileEditSchema = fileEditInputSchema.extend({
   expectedHash: sha256Schema.nullable(),
   proposedHash: sha256Schema,
   originalContent: z.string(),
-  proposedContent: z.string()
+  proposedContent: z.string(),
+  originalMode: z.number().int().nonnegative().nullable()
 });
 
 export const editProposalSchema = z.object({
@@ -51,7 +60,7 @@ export const editProposalSchema = z.object({
   files: z.array(preparedFileEditSchema).min(1).max(MAX_EDIT_FILES)
 });
 
-function countTextBytes(input: EditProposalInput) {
+function countTextBytes(input: ParsedProposal) {
   return input.files.reduce(
     (total, file) => total
       + Buffer.byteLength(file.path, 'utf8')
@@ -66,7 +75,46 @@ function countTextBytes(input: EditProposalInput) {
   );
 }
 
-function assertProposalBounds(input: EditProposalInput) {
+/**
+ * Enforces which fields each action requires. Kept in code rather than as a
+ * zod discriminated union so the model-facing JSON Schema stays a single flat
+ * object -- weaker OpenAI-compatible models handle oneOf poorly -- and so the
+ * error names the actual problem.
+ */
+function assertActionShape(file: ParsedFileEdit) {
+  if (file.action === 'rename') {
+    if (!file.newPath) {
+      throw new Error(`Rename requires newPath: ${file.path}`);
+    }
+    if (file.operations.length > 0) {
+      throw new Error(`Rename does not accept operations; propose the content change separately: ${file.path}`);
+    }
+    // Checked here rather than in prepareRenamedFile so the message names the
+    // real problem; the duplicate-path scan would otherwise report it first as
+    // a generic collision.
+    if (file.newPath === file.path) {
+      throw new Error(`Rename source and target are the same path: ${file.path}`);
+    }
+    return;
+  }
+
+  if (file.newPath) {
+    throw new Error(`newPath is only valid for rename: ${file.path}`);
+  }
+
+  if (file.action === 'delete') {
+    if (file.operations.length > 0) {
+      throw new Error(`Delete does not accept operations: ${file.path}`);
+    }
+    return;
+  }
+
+  if (file.operations.length === 0) {
+    throw new Error(`${file.action} requires at least one operation: ${file.path}`);
+  }
+}
+
+function assertProposalBounds(input: ParsedProposal) {
   const operationCount = input.files.reduce((total, file) => total + file.operations.length, 0);
   if (operationCount > MAX_EDIT_OPERATIONS_TOTAL) {
     throw new Error(`Edit proposal has too many operations (${operationCount} > ${MAX_EDIT_OPERATIONS_TOTAL}).`);
@@ -84,13 +132,13 @@ function assertProposalBounds(input: EditProposalInput) {
  * proposal still carries expectedHash, so a file changed between proposal and
  * apply is still rejected as stale rather than clobbered.
  */
-function isWholeFileRewrite(file: FileEditInput) {
+function isWholeFileRewrite(file: ParsedFileEdit) {
   return file.action === 'update'
     && file.operations.length === 1
     && file.operations[0].oldText === '';
 }
 
-function assertOperation(operation: TextEditOperation, file: FileEditInput) {
+function assertOperation(operation: TextEditOperation, file: ParsedFileEdit) {
   if (operation.oldText === operation.newText) {
     throw new Error(`Edit operation does not change content: ${file.path}`);
   }
@@ -101,7 +149,7 @@ function assertOperation(operation: TextEditOperation, file: FileEditInput) {
   }
 }
 
-function applyOperations(content: string, file: FileEditInput) {
+function applyOperations(content: string, file: ParsedFileEdit) {
   if (isWholeFileRewrite(file)) {
     const proposedContent = file.operations[0].newText;
     if (Buffer.byteLength(proposedContent, 'utf8') > MAX_EDIT_FILE_BYTES) {
@@ -131,7 +179,7 @@ function applyOperations(content: string, file: FileEditInput) {
   return proposedContent;
 }
 
-async function prepareExistingFile(root: string, file: FileEditInput) {
+async function prepareExistingFile(root: string, file: ParsedFileEdit) {
   const inspected = await inspectExistingTextFile(root, file.path);
   const originalContent = inspected.content;
   const proposedContent = applyOperations(originalContent, file);
@@ -148,11 +196,49 @@ async function prepareExistingFile(root: string, file: FileEditInput) {
     expectedHash: inspected.hash,
     proposedHash: hashContent(proposedContent),
     originalContent,
-    proposedContent
+    proposedContent,
+    originalMode: inspected.mode
   };
 }
 
-async function prepareCreatedFile(root: string, file: FileEditInput) {
+async function prepareDeletedFile(root: string, file: ParsedFileEdit) {
+  const inspected = await inspectExistingTextFile(root, file.path);
+
+  // The original bytes stay in the proposal so undo can recreate the file from
+  // memory, the same way an update restores from originalContent. Nothing is
+  // left behind in the workspace after a successful apply.
+  return {
+    ...file,
+    path: inspected.relativePath,
+    expectedHash: inspected.hash,
+    proposedHash: hashContent(''),
+    originalContent: inspected.content,
+    proposedContent: '',
+    originalMode: inspected.mode
+  };
+}
+
+async function prepareRenamedFile(root: string, file: ParsedFileEdit) {
+  const inspected = await inspectExistingTextFile(root, file.path);
+  const target = await resolveSafeCreateTarget(root, file.newPath as string);
+  if (target.relativePath === inspected.relativePath) {
+    throw new Error(`Rename source and target are the same path: ${file.path}`);
+  }
+
+  // A rename moves bytes without changing them, so the two hashes match.
+  return {
+    ...file,
+    path: inspected.relativePath,
+    newPath: target.relativePath,
+    expectedHash: inspected.hash,
+    proposedHash: inspected.hash,
+    originalContent: inspected.content,
+    proposedContent: inspected.content,
+    originalMode: inspected.mode
+  };
+}
+
+async function prepareCreatedFile(root: string, file: ParsedFileEdit) {
   const target = await resolveSafeCreateTarget(root, file.path);
   if (file.operations.length !== 1 || file.operations[0].oldText !== '') {
     throw new Error(`Create operations require exactly one empty oldText: ${file.path}`);
@@ -170,26 +256,50 @@ async function prepareCreatedFile(root: string, file: FileEditInput) {
     expectedHash: null,
     proposedHash: hashContent(proposedContent),
     originalContent: '',
-    proposedContent
+    proposedContent,
+    originalMode: null
   };
+}
+
+function prepareFile(root: string, file: ParsedFileEdit) {
+  switch (file.action) {
+    case 'create':
+      return prepareCreatedFile(root, file);
+    case 'delete':
+      return prepareDeletedFile(root, file);
+    case 'rename':
+      return prepareRenamedFile(root, file);
+    default:
+      return prepareExistingFile(root, file);
+  }
 }
 
 export async function prepareEditProposal(root: string, input: EditProposalInput): Promise<EditProposal> {
   const parsed = editProposalInputSchema.parse(input);
+  for (const file of parsed.files) {
+    assertActionShape(file);
+  }
   assertProposalBounds(parsed);
   const canonicalRoot = await getCanonicalWorkspaceRoot(root);
 
-  const normalizedPaths = parsed.files.map((file) => toPosixPath(relative(
-    canonicalRoot,
-    resolveWorkspacePath(canonicalRoot, file.path)
-  )));
-  if (new Set(normalizedPaths).size !== normalizedPaths.length) {
+  // Every path a proposal touches, including rename targets, has to be unique:
+  // two files renamed onto the same target, or an edit to a file another entry
+  // deletes, would make the apply order decide the outcome.
+  const touchedPaths = parsed.files.flatMap((file) => {
+    const paths = [file.path];
+    if (file.newPath) {
+      paths.push(file.newPath);
+    }
+    return paths.map((path) => toPosixPath(relative(
+      canonicalRoot,
+      resolveWorkspacePath(canonicalRoot, path)
+    )));
+  });
+  if (new Set(touchedPaths).size !== touchedPaths.length) {
     throw new Error('Edit proposal contains duplicate file paths.');
   }
 
-  const files = await Promise.all(parsed.files.map((file) => file.action === 'create'
-    ? prepareCreatedFile(canonicalRoot, file)
-    : prepareExistingFile(canonicalRoot, file)));
+  const files = await Promise.all(parsed.files.map((file) => prepareFile(canonicalRoot, file)));
 
   return {
     summary: parsed.summary,

@@ -13,7 +13,8 @@ const proposal: EditProposal = {
       expectedHash: 'before-hash',
       proposedHash: 'after-hash',
       originalContent: 'const answer = 41;\n',
-      proposedContent: 'const answer = 42;\n'
+      proposedContent: 'const answer = 42;\n',
+      originalMode: 0o644
     },
     {
       path: 'src/config.ts',
@@ -23,7 +24,8 @@ const proposal: EditProposal = {
       expectedHash: null,
       proposedHash: 'create-hash',
       originalContent: '',
-      proposedContent: 'export const enabled = true;\n'
+      proposedContent: 'export const enabled = true;\n',
+      originalMode: null
     }
   ]
 };

@@ -13,11 +13,17 @@ export type TextEditOperation = {
   newText: string;
 };
 
+export type FileEditAction = 'create' | 'update' | 'delete' | 'rename';
+
+/** What a caller may pass in. `operations` defaults to empty when omitted. */
 export type FileEditInput = {
   path: string;
   reason: string;
-  action: 'create' | 'update';
-  operations: TextEditOperation[];
+  action: FileEditAction;
+  /** Omitted or empty for delete and rename, which do not change contents. */
+  operations?: TextEditOperation[];
+  /** Required for rename, rejected for every other action. */
+  newPath?: string;
 };
 
 export type EditProposalInput = {
@@ -25,11 +31,18 @@ export type EditProposalInput = {
   files: FileEditInput[];
 };
 
-export type PreparedFileEdit = FileEditInput & {
+export type PreparedFileEdit = Omit<FileEditInput, 'operations'> & {
+  operations: TextEditOperation[];
   expectedHash: string | null;
   proposedHash: string;
   originalContent: string;
   proposedContent: string;
+  /**
+   * Permission bits of the file as it existed at proposal time, or null when
+   * there was no file. Undoing a delete has to recreate the file after it is
+   * gone, so the mode cannot be read back from disk at that point.
+   */
+  originalMode: number | null;
 };
 
 export type EditProposal = {
@@ -40,7 +53,8 @@ export type EditProposal = {
 export type EditPreviewFile = {
   path: string;
   reason: string;
-  action: 'create' | 'update';
+  action: FileEditAction;
+  newPath?: string;
   patch: string;
   truncated: boolean;
 };
@@ -58,7 +72,8 @@ export type ProposedFileEdits = {
 
 export type AppliedFileEdit = {
   path: string;
-  action: 'create' | 'update';
+  action: FileEditAction;
+  newPath?: string;
   previousHash: string | null;
   appliedHash: string;
 };
@@ -70,7 +85,8 @@ export type ApplyEditResult = {
 
 export type UndoneFileEdit = {
   path: string;
-  action: 'create' | 'update';
+  action: FileEditAction;
+  newPath?: string;
 };
 
 export type UndoEditResult = {

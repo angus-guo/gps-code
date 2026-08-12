@@ -154,10 +154,14 @@ describe('tool registry', () => {
                   properties: {
                     path: {type: 'string', description: expect.any(String)},
                     reason: {type: 'string', description: expect.any(String)},
-                    action: {type: 'string', enum: ['create', 'update']},
+                    action: {
+                      type: 'string',
+                      enum: ['create', 'update', 'delete', 'rename'],
+                      description: expect.any(String)
+                    },
                     operations: {
                       type: 'array',
-                      minItems: 1,
+                      minItems: 0,
                       maxItems: MAX_EDIT_OPERATIONS_PER_FILE,
                       description: expect.any(String),
                       items: {
@@ -169,9 +173,10 @@ describe('tool registry', () => {
                         required: ['oldText', 'newText'],
                         additionalProperties: false
                       }
-                    }
+                    },
+                    newPath: {type: 'string', description: expect.any(String)}
                   },
-                  required: ['path', 'reason', 'action', 'operations'],
+                  required: ['path', 'reason', 'action'],
                   additionalProperties: false
                 }
               }

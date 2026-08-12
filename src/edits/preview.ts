@@ -52,16 +52,68 @@ export function createEditPreview(
   let totalTruncated = false;
 
   const files = proposal.files.map((file) => {
-    const oldName = file.action === 'create' ? '/dev/null' : `a/${file.path}`;
-    const patch = createTwoFilesPatch(
-      oldName,
-      `b/${file.path}`,
-      file.originalContent,
-      file.proposedContent,
-      '',
-      '',
-      {context: parsed.context}
-    );
+    let patch: string;
+    let oldName: string;
+    let newName: string;
+
+    switch (file.action) {
+      case 'delete':
+        oldName = `a/${file.path}`;
+        newName = '/dev/null';
+        patch = createTwoFilesPatch(
+          oldName,
+          newName,
+          file.originalContent,
+          '',
+          '',
+          '',
+          {context: parsed.context}
+        );
+        break;
+      case 'rename':
+        if (!file.newPath) {
+          throw new Error(`Rename preview is missing newPath: ${file.path}`);
+        }
+        oldName = `a/${file.path}`;
+        newName = `b/${file.newPath}`;
+        // A rename moves bytes without changing them.
+        patch = createTwoFilesPatch(
+          oldName,
+          newName,
+          file.originalContent,
+          file.proposedContent,
+          '',
+          '',
+          {context: parsed.context}
+        );
+        break;
+      case 'create':
+        oldName = '/dev/null';
+        newName = `b/${file.path}`;
+        patch = createTwoFilesPatch(
+          oldName,
+          newName,
+          file.originalContent,
+          file.proposedContent,
+          '',
+          '',
+          {context: parsed.context}
+        );
+        break;
+      default:
+        oldName = `a/${file.path}`;
+        newName = `b/${file.path}`;
+        patch = createTwoFilesPatch(
+          oldName,
+          newName,
+          file.originalContent,
+          file.proposedContent,
+          '',
+          '',
+          {context: parsed.context}
+        );
+    }
+
     const allowedBytes = Math.min(parsed.maxPatchBytes, remainingBytes);
     const bounded = truncatePatch(patch, allowedBytes);
     const usedBytes = Buffer.byteLength(bounded.patch, 'utf8');
@@ -73,6 +125,7 @@ export function createEditPreview(
       path: file.path,
       reason: file.reason,
       action: file.action,
+      newPath: file.newPath,
       patch: bounded.patch,
       truncated
     };
