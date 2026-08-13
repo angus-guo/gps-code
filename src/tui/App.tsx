@@ -4,7 +4,8 @@ import {AgentSession} from '../agent/agent.js';
 import type {Agent} from '../agent/agent.js';
 import {runCommand} from '../commands/runner.js';
 import type {CommandRequest} from '../commands/types.js';
-import {loadConfig} from '../config/store.js';
+import {loadConfig, saveConfig} from '../config/store.js';
+import type {ModelConfig} from '../config/schema.js';
 import {applyEditProposal} from '../edits/apply.js';
 import type {ProposedFileEdits} from '../edits/types.js';
 import {undoEditProposal} from '../edits/undo.js';
@@ -101,6 +102,8 @@ export function App({cwd}: {cwd: string}) {
   // onToolActivity callback is registered once and would otherwise capture the
   // value from that first render.
   const policyOptionsRef = useRef<CommandPolicyOptions>({});
+  // The loaded config, kept so /mode can persist permissionMode on top of it.
+  const configRef = useRef<ModelConfig | null>(null);
 
   function changePermissionMode(mode: PermissionMode) {
     permissionModeRef.current = mode;
@@ -141,10 +144,14 @@ export function App({cwd}: {cwd: string}) {
 
         const config = await loadConfig();
         if (config) {
+          configRef.current = config;
           policyOptionsRef.current = {
             allowlist: config.allowlist,
             denylist: config.denylist
           };
+          if (config.permissionMode) {
+            changePermissionMode(config.permissionMode);
+          }
           agentRef.current = new AgentSession({
             model: createOpenAICompatibleClient(config),
             repoMap: map,
@@ -572,10 +579,25 @@ export function App({cwd}: {cwd: string}) {
       }
 
       changePermissionMode(requested);
+      // Persist on top of the loaded config so the mode survives restarts.
+      // Without a config file there is nothing to write to, so the mode stays
+      // session-scoped.
+      let persistenceNote = '';
+      const currentConfig = configRef.current;
+      if (currentConfig) {
+        try {
+          const nextConfig = {...currentConfig, permissionMode: requested};
+          await saveConfig(nextConfig);
+          configRef.current = nextConfig;
+          persistenceNote = '\n模式已写入配置，下次启动自动恢复。';
+        } catch (error) {
+          persistenceNote = `\n模式保存失败，仅在本次会话生效：${error instanceof Error ? error.message : String(error)}`;
+        }
+      }
       setMessages(appendMessage({
         role: 'system',
         kind: 'command',
-        content: `已切换到${PERMISSION_MODE_LABELS[requested]}：${PERMISSION_MODE_DESCRIPTIONS[requested]}`
+        content: `已切换到${PERMISSION_MODE_LABELS[requested]}：${PERMISSION_MODE_DESCRIPTIONS[requested]}${persistenceNote}`
       }));
       return;
     }

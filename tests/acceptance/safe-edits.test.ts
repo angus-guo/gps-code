@@ -192,4 +192,54 @@ describe('M5 cross-language safe edit acceptance', () => {
       .rejects.toThrow(/changed after GPS Code applied/i);
     expect(await readFile(targetPath, 'utf8')).toBe(userContent);
   });
+
+  it('applies and undoes a delete, restoring the original content', async () => {
+    const root = await copyFixture('typescript');
+    const targetPath = join(root, 'src/format.ts');
+    const originalContent = await readFile(targetPath, 'utf8');
+    const result = await proposeFileEditsTool.execute({
+      summary: 'Delete the format helper',
+      files: [{path: 'src/format.ts', reason: 'No longer used', action: 'delete'}]
+    }, {root});
+    const proposed = getProposedFileEdits(result.metadata);
+    expect(proposed).not.toBeNull();
+
+    // Nothing changes before confirmation.
+    expect(await readFile(targetPath, 'utf8')).toBe(originalContent);
+
+    await applyEditProposal(root, proposed!.proposal);
+    await expect(readFile(targetPath, 'utf8')).rejects.toThrow();
+
+    await undoEditProposal(root, proposed!.proposal);
+    expect(await readFile(targetPath, 'utf8')).toBe(originalContent);
+  });
+
+  it('applies and undoes a rename, restoring the original path', async () => {
+    const root = await copyFixture('typescript');
+    const oldPath = join(root, 'src/format.ts');
+    const newPath = join(root, 'src/format-result.ts');
+    const originalContent = await readFile(oldPath, 'utf8');
+    const result = await proposeFileEditsTool.execute({
+      summary: 'Rename the format helper',
+      files: [{
+        path: 'src/format.ts',
+        reason: 'Clearer name',
+        action: 'rename',
+        newPath: 'src/format-result.ts'
+      }]
+    }, {root});
+    const proposed = getProposedFileEdits(result.metadata);
+    expect(proposed).not.toBeNull();
+
+    // Nothing changes before confirmation.
+    expect(await readFile(oldPath, 'utf8')).toBe(originalContent);
+
+    await applyEditProposal(root, proposed!.proposal);
+    await expect(readFile(oldPath, 'utf8')).rejects.toThrow();
+    expect(await readFile(newPath, 'utf8')).toBe(originalContent);
+
+    await undoEditProposal(root, proposed!.proposal);
+    expect(await readFile(oldPath, 'utf8')).toBe(originalContent);
+    await expect(readFile(newPath, 'utf8')).rejects.toThrow();
+  });
 });

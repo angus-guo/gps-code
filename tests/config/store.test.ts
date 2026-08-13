@@ -125,4 +125,40 @@ describe('config store', () => {
       )
     ).rejects.toThrow();
   });
+
+  it('round-trips a persisted permission mode', async () => {
+    const homeDir = await makeTempHome();
+    await saveConfig(
+      {
+        baseURL: 'https://api.deepseek.com',
+        apiKey: 'test-key',
+        model: 'deepseek-chat',
+        temperature: 0.2,
+        maxTokens: 4096,
+        permissionMode: 'read-only'
+      },
+      {homeDir}
+    );
+
+    await expect(loadConfig({homeDir})).resolves.toMatchObject({
+      permissionMode: 'read-only'
+    });
+  });
+
+  it('rejects an unknown permission mode', async () => {
+    const homeDir = await makeTempHome();
+    await expect(
+      saveConfig(
+        {
+          baseURL: 'https://api.deepseek.com',
+          apiKey: 'test-key',
+          model: 'deepseek-chat',
+          temperature: 0.2,
+          maxTokens: 4096,
+          permissionMode: 'yolo' as never
+        },
+        {homeDir}
+      )
+    ).rejects.toThrow();
+  });
 });

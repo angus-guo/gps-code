@@ -1,4 +1,5 @@
 import {z} from 'zod';
+import {isPermissionMode, type PermissionMode} from '../permissions/types.js';
 
 export const modelConfigSchema = z.object({
   baseURL: z
@@ -19,7 +20,11 @@ export const modelConfigSchema = z.object({
   // Cannot override a built-in block; see permissions/policy.ts.
   allowlist: z.array(z.string()).optional(),
   // Command lines that are always refused, checked before anything else.
-  denylist: z.array(z.string()).optional()
+  denylist: z.array(z.string()).optional(),
+  // Permission mode restored at startup; written when /mode switches modes.
+  permissionMode: z
+    .custom<PermissionMode>((value) => typeof value === 'string' && isPermissionMode(value))
+    .optional()
 });
 
 export type ModelConfig = z.infer<typeof modelConfigSchema>;
