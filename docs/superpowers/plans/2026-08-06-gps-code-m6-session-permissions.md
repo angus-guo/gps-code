@@ -18,14 +18,14 @@ V1 (`ask()` rebuilds messages from scratch each turn) has no cross-turn memory, 
 
 **Files created:**
 - `types.ts` — `CommandClassification`, `PermissionMode` (4 档: `default-confirm | auto-accept-edits | read-only | plan`), `CommandPolicyResult`
-- `policy.ts` — `classifyCommand(argv: string[]): CommandClassification`
-  - **Block:** `rm/rmdir/del/format/mkfs/dd/shutdown/reboot`
-  - **Confirm:** `git push/force-push/reset --hard/clean -f`, `npm/pnpm publish`, `chmod/chown`, `curl/wget` with output redirect
+- `policy.ts` — `classifyCommand(request: CommandRequest, options?: CommandPolicyOptions): CommandPolicyResult` (M6 doc originally claimed signature was `argv: string[]`; corrected in M9)
+  - **M6 shipped:** Block `rm/rmdir/del/erase` with recursive or force flags; confirm plain single-file removal; block `git push --force`, `git reset --hard`, `git clean -f`
+  - **M6 claimed but never implemented:** `format/mkfs/dd/shutdown/reboot` blocks, `npm`/`pnpm` publish / `chmod`/`chown` / `curl`/`wget` redirect confirms. M9 filled the gap for system commands and permission changes; publish and redirects remain out of scope.
   - **Allow:** everything else
-- `tests/permissions/policy.test.ts` — 9 tests, all passing ✓
+- `tests/permissions/policy.test.ts` — 10 tests (M6 shipped 9, M9 added 1), all passing ✓
 
 **Design notes:**
-- Classification works on `argv` arrays (shell-safe), not shell strings
+- Classification works on `CommandRequest` objects (shell-safe), not shell strings
 - `runner.ts` already uses `execa` with `shell: false`, perfect fit
 - M6 wires up the policy but doesn't change TUI behavior yet (all commands still go through confirmation)
 
