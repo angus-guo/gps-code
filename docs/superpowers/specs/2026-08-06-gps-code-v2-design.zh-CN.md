@@ -72,6 +72,36 @@ GPS Code 是面向个人开发者的中文优先 AI coding agent，尤其适合�
 
 下面各里程碑的*内容*仍然有效，但 M6 之后的*编号*要顺延一位来读。
 
+## 进度追踪（截至 2026-08-14）
+
+| 里程碑 | 状态 | 提交 | 计划文档 | 备注 |
+|---|---|---|---|---|
+| M6 | ✅ 完成 | `e6322b5` | `plans/2026-08-06-gps-code-m6-session-permissions.md` | Agent session 基础设施、策略基础、工具截断 |
+| M7 | ✅ 完成 | `4251a5d` | `plans/2026-08-06-gps-code-m7-permission-modes.md` | 四档模式生效、`/run` 绕过堵住、状态栏指示器 |
+| M7.5 | ✅ 完成 | `530f73f` | `plans/2026-08-07-gps-code-m7.5-cancellation.md` | Ctrl-C 取消功能（偿还 M6 欠账） |
+| M8a | ✅ 完成 | `1ea97bb` | `plans/2026-08-07-gps-code-m8-edit-capability.md` | 编辑限额提升、整体重写模式 |
+| M8b | ✅ 完成 | `fd4087a` | 同 M8a | delete 和 rename 动作，带撤销/回滚 |
+| M9 | ✅ 完成 | `9c0436f` | `plans/2026-08-07-gps-code-m9-blacklist-strong-confirm.md` | 黑名单补全（系统命令、chmod -R、全局安装、迁移），strong-confirm 确认层级，allowlist/denylist |
+| M10 | 🔜 下一步 | — | — | 历史压缩 + 流式输出（原规划为 M9） |
+| M11 | ⏳ 已规划 | — | — | Git 自动 stage/commit、多级撤销、prompt caching |
+| M12 | ⏳ 已规划 | — | — | GPS.md 解析、MCP 客户端、hooks |
+
+**测试套件**：207 通过，3 跳过（Windows 能力缺口），0 失败（31 个文件）
+
+**相比原始路线图的变化**：
+- 原 M7（"编辑能力扩展"）变成 M8 并拆分为 M8a/M8b
+- 原 M8（"完整黑名单 + Tool-calling 降级"）被拆分：黑名单变成 M9，降级功能推迟
+- 原 M9（"历史压缩 + 流式输出"）现在是 M10
+- 取消功能作为 M7.5 交付，而非在 M6 中
+
+**原 M6 范围中尚未完成的项目**：
+- ❌ Tool-calling 降级（弱模型降级处理）—— 已推迟，尚未排期
+- ✅ M6 的其他所有项已在 M6/M7/M7.5 中交付
+
+**实践中尚未验证**：
+- Strong-confirm UX（没有真实模型提议过需要强确认的命令）
+- Delete/rename 动作（模型尚未被观察到选择这些动作）
+
 ## 长期路线图：M6-M12
 
 ### M6 — Agent Session + 权限模式 + 轻量上下文管理

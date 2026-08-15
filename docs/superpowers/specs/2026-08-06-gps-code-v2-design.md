@@ -79,6 +79,36 @@ differs, and the numbering has been amended rather than silently corrected:
 Treat the milestone *contents* below as still valid and the *numbers* as
 off-by-one past M6.
 
+## Progress Tracker (as of 2026-08-14)
+
+| Milestone | Status | Commit | Plan Doc | Notes |
+|---|---|---|---|---|
+| M6 | ✅ Done | `e6322b5` | `plans/2026-08-06-gps-code-m6-session-permissions.md` | Agent session infrastructure, policy foundation, tool truncation |
+| M7 | ✅ Done | `4251a5d` | `plans/2026-08-06-gps-code-m7-permission-modes.md` | Four modes effective, `/run` bypass closed, header indicator |
+| M7.5 | ✅ Done | `530f73f` | `plans/2026-08-07-gps-code-m7.5-cancellation.md` | Ctrl-C cancellation (M6 debt closure) |
+| M8a | ✅ Done | `1ea97bb` | `plans/2026-08-07-gps-code-m8-edit-capability.md` | Edit limits raised, whole-file rewrite |
+| M8b | ✅ Done | `fd4087a` | Same as M8a | Delete and rename actions with undo/rollback |
+| M9 | ✅ Done | `9c0436f` | `plans/2026-08-07-gps-code-m9-blacklist-strong-confirm.md` | Blacklist completion (system commands, chmod -R, global installs, migrations), strong-confirm tier, allowlist/denylist |
+| M10 | 🔜 Next | — | — | History compression + streaming (originally M9 in this spec) |
+| M11 | ⏳ Planned | — | — | Git auto-stage/commit, multi-level undo, prompt caching |
+| M12 | ⏳ Planned | — | — | GPS.md parsing, MCP client, hooks |
+
+**Test suite**: 207 passed, 3 skipped (Windows capability gaps), 0 failed (31 files)
+
+**What changed from the original roadmap**:
+- Original M7 ("Edit Capability Extension") became M8 and was split into M8a/M8b
+- Original M8 ("Complete Blacklist + Tool-Calling Degradation") was split: blacklist became M9, tool degradation postponed
+- Original M9 ("History Compression + Streaming") is now M10
+- Cancellation shipped as M7.5 rather than in M6
+
+**Still outstanding from original M6 scope**:
+- ❌ Tool-calling degradation (weak model fallback) — postponed, not yet scheduled
+- ✅ All other M6 items shipped across M6/M7/M7.5
+
+**Not verified in practice**:
+- Strong-confirm UX (no live model has proposed a command requiring it)
+- Delete/rename actions (models haven't been observed choosing them yet)
+
 ## Long-Term Roadmap: M6-M12
 
 ### M6 — Agent Session + Permission Modes + Lightweight Context Management
